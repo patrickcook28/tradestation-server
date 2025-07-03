@@ -14,29 +14,7 @@ This Node.js/Express server provides a complete trade alert system with standard
 
 ## Setup
 
-### 1. Database Setup
-
-First, ensure PostgreSQL is installed and running. Then set up the database:
-
-```bash
-# Create the database (if it doesn't exist)
-createdb tradestation_trading_app
-
-# Run the database setup script
-node setup_db.js
-```
-
-The `setup_db.js` script will automatically:
-- Read the `db_schema.sql` file
-- Execute all the SQL commands to create the required tables
-- Set up the database schema for the trade alert system
-
-Alternatively, you can manually run the schema:
-```bash
-psql -d tradestation_trading_app -f db_schema.sql
-```
-
-### 2. Environment Variables
+### 1. Environment Variables
 
 Create a `.env` file in the root directory with the following variables:
 
@@ -63,6 +41,28 @@ TWILIO_ACCOUNT_SID=ACyour_account_sid_here
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_FROM_NUMBER=+18883281705
 TWILIO_TO_NUMBER=+18052070953
+```
+
+### 2. Database Setup
+
+First, ensure PostgreSQL is installed and running. Then set up the database:
+
+```bash
+# Create the database (if it doesn't exist)
+createdb tradestation_trading_app
+
+# Run the database setup script
+node setup_db.js
+```
+
+The `setup_db.js` script will automatically:
+- Read the `db_schema.sql` file
+- Execute all the SQL commands to create the required tables
+- Set up the database schema for the trade alert system
+
+Alternatively, you can manually run the schema:
+```bash
+psql -d tradestation_trading_app -f db_schema.sql
 ```
 
 ### 3. Install Dependencies
