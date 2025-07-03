@@ -7,6 +7,7 @@ This Node.js/Express server provides a complete trade alert system with standard
 - **Trade Alerts**: Create, update, and delete price-based alerts
 - **Standard Deviation Analysis**: Calculate ±1, ±1.5, and ±2 standard deviation bands based on candle body sizes
 - **Background Alert Checking**: Automated monitoring of price levels every 5 minutes
+- **SMS Notifications**: Alert triggers with SMS notifications via Twilio
 - **Email Notifications**: Alert triggers with detailed email notifications (currently logged)
 - **Alert Logging**: Complete history of all alert triggers
 - **TradeStation API Integration**: Fetches market data and manages OAuth credentials
@@ -15,36 +16,53 @@ This Node.js/Express server provides a complete trade alert system with standard
 
 ### 1. Database Setup
 
-Run the database schema to create the required tables:
+First, ensure PostgreSQL is installed and running. Then set up the database:
 
-```sql
--- Execute the contents of db_schema.sql in your PostgreSQL database
+```bash
+# Create the database (if it doesn't exist)
+createdb tradestation_trading_app
+
+# Run the database setup script
+node setup_db.js
+```
+
+The `setup_db.js` script will automatically:
+- Read the `db_schema.sql` file
+- Execute all the SQL commands to create the required tables
+- Set up the database schema for the trade alert system
+
+Alternatively, you can manually run the schema:
+```bash
+psql -d tradestation_trading_app -f db_schema.sql
 ```
 
 ### 2. Environment Variables
 
-Create a `.env` file with the following variables:
+Create a `.env` file in the root directory with the following variables:
 
 ```env
-# Database
+# Database Configuration
 DATABASE_HOST=localhost
 DATABASE_USER=postgres
 DATABASE_PASSWORD=postgres
 DATABASE=tradestation_trading_app
 
-# JWT
+# JWT Configuration
 JWT_SECRET=your_jwt_secret_here
 
-# TradeStation API
+# TradeStation API Configuration
 TRADESTATION_CLIENT_ID=your_client_id
 TRADESTATION_CLIENT_SECRET=your_client_secret
 TRADESTATION_REDIRECT_URI=http://localhost:3001
 
-# Frontend
+# Frontend Configuration
 REACT_PORT=3002
 
-# Optional: Email service (for production)
-SENDGRID_API_KEY=your_sendgrid_key
+# Twilio SMS Configuration
+TWILIO_ACCOUNT_SID=ACyour_account_sid_here
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_FROM_NUMBER=+18883281705
+TWILIO_TO_NUMBER=+18052070953
 ```
 
 ### 3. Install Dependencies
@@ -90,7 +108,8 @@ The `AlertChecker` class runs automatically and:
 2. Fetches current prices from TradeStation API
 3. Triggers alerts when price conditions are met
 4. Logs all triggers to the database
-5. Sends email notifications (currently logged to console)
+5. Sends SMS notifications via Twilio
+6. Sends email notifications (currently logged to console)
 
 ## Standard Deviation Calculation
 
@@ -100,33 +119,3 @@ The system calculates standard deviation bands based on:
 - **Calculation Method**: Candle body sizes (|open - close|)
 - **Bands**: ±1, ±1.5, and ±2 standard deviations from current price
 - **Caching**: Results are cached in the database and updated periodically
-
-## Frontend Integration
-
-The frontend can fetch std dev levels and display them on charts:
-
-```javascript
-// Fetch std dev levels
-const response = await fetch(`http://localhost:3001/std_dev_levels/MNQ?timeframe=1hour`);
-const levels = await response.json();
-
-// Display on chart
-// levels.plus_1_std, levels.plus_1_5_std, levels.plus_2_std
-// levels.minus_1_std, levels.minus_1_5_std, levels.minus_2_std
-```
-
-## Production Considerations
-
-1. **Email Service**: Implement actual email sending (SendGrid, AWS SES, etc.)
-2. **Error Handling**: Add more robust error handling and retry logic
-3. **Rate Limiting**: Implement API rate limiting for TradeStation calls
-4. **Monitoring**: Add health checks and monitoring for the background worker
-5. **Security**: Implement proper user authentication and authorization
-6. **Scaling**: Consider using a job queue (Redis/Bull) for alert processing
-
-## Troubleshooting
-
-- **CORS Issues**: Ensure the frontend origin is included in CORS configuration
-- **Database Connection**: Verify PostgreSQL is running and credentials are correct
-- **TradeStation API**: Check that OAuth credentials are valid and not expired
-- **Alert Checker**: Monitor console logs for background worker status 
