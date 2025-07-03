@@ -12,9 +12,8 @@
 <body>
     {{!-- Navigation links --}}
     <nav>
-        <h4>Node MySQL Login</h4>
+        <h4>TradeStation Order Panel</h4>
         <ul>
-            <li><a href="/">Home</a></li>
             <li><a href="/login">Login</a></li>
             <li><a href="/register">Register</a></li>
         </ul>
@@ -26,10 +25,6 @@
             <div class="card-header">Register Form</div>    
             <div class="card-body">
                 <form action="/auth/register" method="POST">
-                    <div class="mb-3">
-                        <label for="name-reg" class="form-label">Name</label>
-                        <input type="text" class="form-control" id="name-reg" name="name">                        
-                    </div>
                     <div class="mb-3">
                         <label for="email-reg" class="form-label">Email</label>
                         <input type="text" class="form-control" id="email-reg" name="email">                        
@@ -49,7 +44,7 @@
         </div>
 
         {{#if message }}
-            <h4 class="alert alert-danger mt-4">{{message}}</h4>
+            <h4 class="alert alert-success mt-4">{{message}}</h4>
         {{/if}}
     </div>
 </body>

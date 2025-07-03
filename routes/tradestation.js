@@ -1,0 +1,250 @@
+const jwt = require("jsonwebtoken")
+const fetch = require('node-fetch');
+const pool = require("../db");
+const {json} = require("express");
+const { getCommonFuturesContracts, getContractSeries } = require('../utils/contractSymbols');
+
+const fetchAccessToken = async (req, res) => {
+  const code = req.query.code;
+  const token = req.query.state;
+
+  if (!code) return res.sendStatus(400);
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+  });
+
+  // Use the authorization code to request an access token
+  const token_url = 'https://signin.tradestation.com/oauth/token';
+  const data = {
+    'grant_type': 'authorization_code',
+    'client_id': process.env.TRADESTATION_CLIENT_ID,
+    'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
+    'code': code,
+    'redirect_uri': process.env.TRADESTATION_REDIRECT_URI
+  };
+
+  try {
+    const response = await fetch(token_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (response.ok) {
+      const json_response = await response.json();
+      const access_token = json_response['access_token'];
+      const refresh_token = json_response['refresh_token'];
+      const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
+
+      pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
+        if(error){
+          console.error(error);
+        } else if( result.rows.length > 0 ) {
+          const query = 'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4';
+          const values = [access_token, refresh_token, expires_at, req.user.id];
+          await pool.query(query, values);
+        } else {
+          const query = 'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)';
+          const values = [req.user.id, access_token, refresh_token, expires_at];
+          await pool.query(query, values);
+        }
+      });
+
+      res.redirect(`http://localhost:${process.env.REACT_PORT}/connected?access_token=${access_token}&refresh_token=${refresh_token}}`)
+    } else {
+      res.json({ error: await response.json(), message: 'could not get access token' })
+    }
+  } catch (error) {
+    console.error(error);
+    res.json({ error, message: 'could not get access token' })
+  }
+}
+
+const refreshAccessToken = async (req, res) => {
+  const token = req.headers['authorization'].split(' ')[1];
+
+  pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
+    if(error){
+      return res.status(400).json({ error: 'DB Connection Failed' })
+    } else if( result.rows.length > 0 ) {
+      const oauthCredentials = result.rows[0]
+      // Use the refresh token to request a new access token
+      const token_url = 'https://signin.tradestation.com/oauth/token';
+      const data = {
+        'grant_type': 'refresh_token',
+        'client_id': process.env.TRADESTATION_CLIENT_ID,
+        'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
+        'refresh_token': oauthCredentials.refresh_token
+      };
+
+      try {
+        const response = await fetch(token_url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+          const json_response = await response.json();
+          const access_token = json_response['access_token'];
+          const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
+
+          // Update the access token and expiration time in the database
+          oauthCredentials.access_token = access_token;
+          oauthCredentials.expires_at = expires_at;
+
+          // SAVE TO DB
+          const query = 'UPDATE api_credentials SET access_token = $1, expires_at = $2 WHERE user_id = $3';
+          const values = [access_token, expires_at, req.user.id];
+          await pool.query(query, values);
+
+          res.json(oauthCredentials);
+        } else {
+          res.status(400).json({ 'error': 'Attempt to refresh token failed due to Tradestation response' });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(400).json({ 'error': 'could not refresh token' });
+      }
+    } else {
+      return res.status(400).json({ error: 'User not found' })
+    }
+  })
+}
+
+const syncCredentials = async (req, res) => {
+  try {
+    const { access_token, refresh_token } = req.body;
+    
+    if (!access_token || !refresh_token) {
+      return res.status(400).json({ error: 'Missing access_token or refresh_token' });
+    }
+    
+    const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
+    const user_id = req.user.id;
+    
+    // Check if credentials exist for this user
+    const checkQuery = 'SELECT * FROM api_credentials WHERE user_id = $1';
+    const checkResult = await pool.query(checkQuery, [user_id]);
+    
+    if (checkResult.rows.length > 0) {
+      // Update existing credentials
+      const updateQuery = 'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4';
+      await pool.query(updateQuery, [access_token, refresh_token, expires_at, user_id]);
+    } else {
+      // Insert new credentials
+      const insertQuery = 'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)';
+      await pool.query(insertQuery, [user_id, access_token, refresh_token, expires_at]);
+    }
+    
+    res.json({ message: 'Credentials synced successfully' });
+  } catch (error) {
+    console.error('Error syncing credentials:', error);
+    res.status(500).json({ error: 'Failed to sync credentials' });
+  }
+};
+
+// Get ticker options for the UI
+const getTickerOptions = async (req, res) => {
+  try {
+    const { search = '' } = req.query;
+    
+    // Get common futures with current contracts
+    const futuresContracts = getCommonFuturesContracts();
+    
+    // Add some common stock symbols
+    const commonStocks = [
+      { symbol: 'AAPL', name: 'Apple Inc.' },
+      { symbol: 'MSFT', name: 'Microsoft Corporation' },
+      { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+      { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+      { symbol: 'TSLA', name: 'Tesla Inc.' },
+      { symbol: 'NVDA', name: 'NVIDIA Corporation' },
+      { symbol: 'META', name: 'Meta Platforms Inc.' },
+      { symbol: 'SPY', name: 'SPDR S&P 500 ETF' },
+      { symbol: 'QQQ', name: 'Invesco QQQ Trust' },
+      { symbol: 'IWM', name: 'iShares Russell 2000 ETF' }
+    ];
+    
+    // Combine all suggestions
+    const allSuggestions = [
+      ...futuresContracts.map(f => ({
+        value: f.currentContract,
+        label: `${f.currentContract} - ${f.name}`,
+        type: 'futures'
+      })),
+      ...commonStocks.map(s => ({
+        value: s.symbol,
+        label: `${s.symbol} - ${s.name}`,
+        type: 'stock'
+      }))
+    ];
+    
+    // Filter by search term if provided
+    let filteredSuggestions = allSuggestions;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredSuggestions = allSuggestions.filter(suggestion => 
+        suggestion.value.toLowerCase().includes(searchLower) ||
+        suggestion.label.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Limit results
+    filteredSuggestions = filteredSuggestions.slice(0, 20);
+    
+    res.json({
+      success: true,
+      suggestions: filteredSuggestions
+    });
+    
+  } catch (error) {
+    console.error('Error getting ticker options:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get ticker options'
+    });
+  }
+};
+
+// Get available contracts for a ticker (e.g., MNQZ24, MNQH25, etc.)
+const getTickerContracts = async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const { count = 4 } = req.query;
+    
+    // Extract the base product (e.g., 'MNQ' from 'MNQZ24')
+    const baseProduct = ticker.replace(/[A-Z]\d{2}$/, '').toUpperCase();
+    
+    const contracts = getContractSeries(baseProduct, parseInt(count));
+    
+    res.json({
+      success: true,
+      contracts: contracts.map(contract => ({
+        value: contract,
+        label: contract
+      }))
+    });
+    
+  } catch (error) {
+    console.error('Error getting ticker contracts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get ticker contracts'
+    });
+  }
+};
+
+module.exports = {
+  fetchAccessToken,
+  refreshAccessToken,
+  syncCredentials,
+  getTickerOptions,
+  getTickerContracts,
+}
