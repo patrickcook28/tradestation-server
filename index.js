@@ -1,18 +1,18 @@
 const express = require('express');
-const pool = require('../db');
+const pool = require('./db');
 const path = require("path");
 const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const cors = require('cors');
-const routes = require('../routes');
+const routes = require('./routes');
 const Pusher = require("pusher");
-const RealtimeAlertChecker = require('../workers/realtimeAlertChecker');
-const logger = require('../config/logging');
+const RealtimeAlertChecker = require('./workers/realtimeAlertChecker');
+const logger = require('./config/logging');
 const fs = require('fs');
 const hbs = require('hbs');
-const { tradeStationRoutes, tradeAlertsRoutes } = require('../routes');
+const { tradeStationRoutes, tradeAlertsRoutes } = require('./routes');
 
 dotenv.config({ path: './.env'});
 
@@ -165,5 +165,11 @@ app.locals.realtimeAlertChecker = realtimeAlertChecker;
 app.get('/tradestation/oauth', tradeStationRoutes.fetchAccessToken);
 app.put('/tradestation/refresh_token', authenticateToken, tradeStationRoutes.refreshAccessToken);
 app.post('/tradestation/sync_credentials', authenticateToken, tradeStationRoutes.syncCredentials);
+
+const PORT = process.env.PORT || 3001;
+
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
+});
 
 module.exports = app; 
