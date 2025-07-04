@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const { getCurrentContractSymbol } = require('../utils/contractSymbols');
 const logger = require('../config/logging');
 const { roundStdDevLevels, roundToTickSize, roundToTwoDecimals } = require('../utils/tickSizeUtils');
+const { refreshAccessTokenForUser } = require('./tradestation');
 
 // Helper function to transform ticker to current contract if needed
 const transformTickerToCurrentContract = (ticker) => {
@@ -476,19 +477,21 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
   try {
     // Get user credentials from api_credentials table
     const credentialsQuery = 'SELECT * FROM api_credentials WHERE user_id = $1 LIMIT 1';
-    const credentialsResult = await pool.query(credentialsQuery, [userId]);
-    
+    let credentialsResult = await pool.query(credentialsQuery, [userId]);
     if (credentialsResult.rows.length === 0) {
       logger.error(`No API credentials found for user ${userId}`);
       return null;
     }
-    
-    const credentials = credentialsResult.rows[0];
-    
+    let credentials = credentialsResult.rows[0];
+
     // Check if access token is expired and refresh if needed
     if (credentials.expires_at && new Date(credentials.expires_at) < new Date()) {
       logger.error('Access token expired, refreshing...');
-      // You can call the refresh logic here or let the existing refresh mechanism handle it
+      // Call the refresh logic before continuing
+      await refreshAccessTokenForUser(userId);
+      // Re-fetch credentials after refresh
+      credentialsResult = await pool.query(credentialsQuery, [userId]);
+      credentials = credentialsResult.rows[0];
     }
     
     // Map timeframe to TradeStation API unit and barsback

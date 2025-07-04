@@ -10,6 +10,8 @@ const routes = require('./routes');
 const Pusher = require("pusher");
 const RealtimeAlertChecker = require('./workers/realtimeAlertChecker');
 const logger = require('./config/logging');
+const fs = require('fs');
+const hbs = require('hbs');
 
 dotenv.config({ path: './.env'})
 
@@ -36,6 +38,10 @@ const publicDir = path.join(__dirname, './public')
 app.use(express.static(publicDir))
 app.use(express.urlencoded({extended: 'false'}))
 app.use(express.json())
+
+// Set up Handlebars as the view engine
+app.set('view engine', 'hbs');
+app.set('views', path.join(__dirname, 'views'));
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -131,6 +137,24 @@ app.post("/auth/login", (req, res) => {
 // TradeStation routes
 app.get('/', routes.tradeStationRoutes.fetchAccessToken);
 app.put('/tradestation/refresh_token', authenticateToken, routes.tradeStationRoutes.refreshAccessToken);
+
+
+// Server status and user list
+app.get('/', async (req, res) => {
+  let dbStatus = 'Unknown';
+  let users = [];
+  try {
+    // Check DB connection
+    await pool.query('SELECT 1');
+    dbStatus = 'Connected';
+    // Get users (id and email only)
+    const result = await pool.query('SELECT id, email FROM users ORDER BY id');
+    users = result.rows;
+  } catch (err) {
+    dbStatus = 'Error: ' + err.message;
+  }
+  res.render('status', { dbStatus, users });
+});
 
 // Ticker options routes
 app.get('/ticker_options', routes.tradeStationRoutes.getTickerOptions);

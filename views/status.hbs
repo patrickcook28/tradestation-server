@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdgeCraft Server Status</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    .status { margin-bottom: 1em; }
+    .users-table { border-collapse: collapse; width: 100%; max-width: 400px; }
+    .users-table th, .users-table td { border: 1px solid #ccc; padding: 0.5em; }
+    .users-table th { background: #f0f0f0; }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 1em; }
+    .brand-logo { height: 48px; }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <img src="/logo192.png" alt="EdgeCraft Logo" class="brand-logo"/>
+    <h1 style="margin: 0;">EdgeCraft Server</h1>
+  </div>
+  <div class="status">
+    <strong>DB Connection:</strong> {{dbStatus}}
+  </div>
+  <div>
+    <strong>Users:</strong>
+    <table class="users-table">
+      <thead><tr><th>ID</th><th>Email</th></tr></thead>
+      <tbody>
+        {{#each users}}
+          <tr><td>{{this.id}}</td><td>{{this.email}}</td></tr>
+        {{/each}}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html> 
