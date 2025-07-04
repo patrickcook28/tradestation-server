@@ -65,14 +65,14 @@ const authenticateToken = (req, res, next) => {
 };
 
 app.post("/auth/register", (req, res) => {    
-    const { email, password, password_confirm } = req.body
-
+    const { email, password, password_confirmation } = req.body
+    console.log(password, password_confirmation)
     pool.query('SELECT email FROM users WHERE email = $1', [email], async (error, result) => {
         if(error){
             return res.status(400).json({ error: 'Failed to check if user exists' })
         } else if( result.rows.length > 0 ) {
             return res.status(400).json({ error: 'Email is already in use' })
-        } else if(password !== password_confirm) {
+        } else if(password !== password_confirmation) {
             return res.status(400).json({ error: 'Password Didn\'t Match!'})
         }
 
@@ -118,8 +118,7 @@ app.post("/auth/login", (req, res) => {
   })
 })
 
-// New index route for server status and user list
-app.get('/', async (req, res) => {
+app.get('/status', async (req, res) => {
   let dbStatus = 'Unknown';
   let users = [];
   try {
@@ -162,7 +161,7 @@ realtimeAlertChecker.start().catch(error => {
 app.locals.realtimeAlertChecker = realtimeAlertChecker;
 
 // Add all tradestation routes
-app.get('/tradestation/oauth', tradeStationRoutes.fetchAccessToken);
+app.get('/', tradeStationRoutes.fetchAccessToken);
 app.put('/tradestation/refresh_token', authenticateToken, tradeStationRoutes.refreshAccessToken);
 app.post('/tradestation/sync_credentials', authenticateToken, tradeStationRoutes.syncCredentials);
 
