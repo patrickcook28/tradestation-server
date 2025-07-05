@@ -35,6 +35,7 @@ TRADESTATION_REDIRECT_URI=http://localhost:3001
 
 # Frontend Configuration
 REACT_PORT=3002
+FRONTEND_URL=https://your-frontend-domain.vercel.app
 
 # Twilio SMS Configuration
 TWILIO_ACCOUNT_SID=ACyour_account_sid_here

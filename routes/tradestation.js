@@ -4,7 +4,7 @@ const pool = require("../db");
 const {json} = require("express");
 const { getCommonFuturesContracts, getContractSeries } = require('../utils/contractSymbols');
 
-const fetchAccessToken = async (req, res) => {
+const handleOAuthCallback = async (req, res) => {
   const code = req.query.code;
   const token = req.query.state;
 
@@ -65,8 +65,6 @@ const fetchAccessToken = async (req, res) => {
 }
 
 const refreshAccessToken = async (req, res) => {
-  const token = req.headers['authorization'].split(' ')[1];
-
   pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
     if(error){
       return res.status(400).json({ error: 'DB Connection Failed' })
@@ -118,35 +116,30 @@ const refreshAccessToken = async (req, res) => {
   })
 }
 
-const syncCredentials = async (req, res) => {
+// Get stored API credentials for the authenticated user
+const getStoredCredentials = async (req, res) => {
   try {
-    const { access_token, refresh_token } = req.body;
-    
-    if (!access_token || !refresh_token) {
-      return res.status(400).json({ error: 'Missing access_token or refresh_token' });
-    }
-    
-    const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
-    const user_id = req.user.id;
-    
-    // Check if credentials exist for this user
-    const checkQuery = 'SELECT * FROM api_credentials WHERE user_id = $1';
-    const checkResult = await pool.query(checkQuery, [user_id]);
-    
-    if (checkResult.rows.length > 0) {
-      // Update existing credentials
-      const updateQuery = 'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4';
-      await pool.query(updateQuery, [access_token, refresh_token, expires_at, user_id]);
-    } else {
-      // Insert new credentials
-      const insertQuery = 'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)';
-      await pool.query(insertQuery, [user_id, access_token, refresh_token, expires_at]);
-    }
-    
-    res.json({ message: 'Credentials synced successfully' });
+    pool.query('SELECT access_token, refresh_token, expires_at FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
+      if(error){
+        return res.status(400).json({ error: 'DB Connection Failed' })
+      } else if( result.rows.length > 0 ) {
+        const credentials = result.rows[0];
+        
+        res.json({
+          access_token: credentials.access_token,
+          refresh_token: credentials.refresh_token,
+          expires_at: credentials.expires_at
+        });
+      } else {
+        res.status(404).json({ error: 'No credentials found' });
+      }
+    });
   } catch (error) {
-    console.error('Error syncing credentials:', error);
-    res.status(500).json({ error: 'Failed to sync credentials' });
+    console.error('Error getting stored credentials:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve stored credentials' 
+    });
   }
 };
 
@@ -273,9 +266,9 @@ const refreshAccessTokenForUser = async (userId) => {
 };
 
 module.exports = {
-  fetchAccessToken,
+  handleOAuthCallback,
   refreshAccessToken,
-  syncCredentials,
+  getStoredCredentials,
   getTickerOptions,
   getTickerContracts,
   refreshAccessTokenForUser,
