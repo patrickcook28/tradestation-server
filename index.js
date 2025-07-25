@@ -14,6 +14,7 @@ const fs = require('fs');
 const hbs = require('hbs');
 const { tradeStationRoutes, tradeAlertsRoutes } = require('./routes');
 const { authenticateToken } = require('./routes/auth');
+const referralRoutes = require('./routes/referral');
 
 dotenv.config({ path: './.env'});
 
@@ -68,6 +69,7 @@ app.post("/auth/register", routes.authRoutes.register);
 app.post("/auth/login", routes.authRoutes.login);
 app.get("/auth/settings", authenticateToken, routes.authRoutes.getUserSettings);
 app.put("/auth/settings", authenticateToken, routes.authRoutes.updateUserSettings);
+app.post("/auth/apply_referral_code", authenticateToken, routes.authRoutes.applyReferralCode);
 
 // Ticker options routes
 app.get('/ticker_options', routes.tradeStationRoutes.getTickerOptions);
@@ -90,6 +92,9 @@ app.get('/debug/credentials', tradeAlertsRoutes.debugCredentials);
 app.get('/', tradeStationRoutes.handleOAuthCallback);
 app.get('/tradestation/credentials', authenticateToken, tradeStationRoutes.getStoredCredentials);
 app.put('/tradestation/refresh_token', authenticateToken, tradeStationRoutes.refreshAccessToken);
+
+// Add referral routes
+app.use('/referral', referralRoutes);
 
 // Start the real-time alert checker
 const realtimeAlertChecker = new RealtimeAlertChecker();
