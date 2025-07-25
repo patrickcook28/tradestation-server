@@ -66,6 +66,8 @@ app.get('/status', async (req, res) => {
 // Auth routes
 app.post("/auth/register", routes.authRoutes.register);
 app.post("/auth/login", routes.authRoutes.login);
+app.get("/auth/settings", authenticateToken, routes.authRoutes.getUserSettings);
+app.put("/auth/settings", authenticateToken, routes.authRoutes.updateUserSettings);
 
 // Ticker options routes
 app.get('/ticker_options', routes.tradeStationRoutes.getTickerOptions);

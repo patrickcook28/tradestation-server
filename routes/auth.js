@@ -51,7 +51,12 @@ const login = async (req, res) => {
             token,
             user: {
                 id: user.id,
-                email: user.email
+                email: user.email,
+                maxLossPerDay: user.max_loss_per_day || 0,
+                maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
+                maxLossPerTrade: user.max_loss_per_trade || 0,
+                maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+                superuser: user.superuser || false
             }
         })
     })
@@ -77,8 +82,78 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Get user settings
+const getUserSettings = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const result = await pool.query(
+            'SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, superuser FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = result.rows[0];
+        return res.json({
+            maxLossPerDay: user.max_loss_per_day || 0,
+            maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
+            maxLossPerTrade: user.max_loss_per_trade || 0,
+            maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            superuser: user.superuser || false
+        });
+    } catch (error) {
+        logger.error('Error getting user settings:', error);
+        return res.status(500).json({ error: 'Failed to get user settings' });
+    }
+};
+
+// Update user settings
+const updateUserSettings = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { 
+            maxLossPerDay, 
+            maxLossPerDayEnabled, 
+            maxLossPerTrade, 
+            maxLossPerTradeEnabled 
+        } = req.body;
+
+        const result = await pool.query(
+            `UPDATE users SET 
+                max_loss_per_day = $1,
+                max_loss_per_day_enabled = $2,
+                max_loss_per_trade = $3,
+                max_loss_per_trade_enabled = $4
+            WHERE id = $5
+            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, superuser`,
+            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = result.rows[0];
+        return res.json({
+            maxLossPerDay: user.max_loss_per_day || 0,
+            maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
+            maxLossPerTrade: user.max_loss_per_trade || 0,
+            maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            superuser: user.superuser || false
+        });
+    } catch (error) {
+        logger.error('Error updating user settings:', error);
+        return res.status(500).json({ error: 'Failed to update user settings' });
+    }
+};
+
 module.exports = {
     register,
     login,
-    authenticateToken
+    authenticateToken,
+    getUserSettings,
+    updateUserSettings
 };

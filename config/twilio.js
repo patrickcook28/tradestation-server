@@ -39,7 +39,7 @@ module.exports = {
     const crossedLevel = alert.price_level;
     
     return `🚨 PRICE ALERT 🚨
-${alert.ticker} current: ${triggerPrice} ${direction} ${crossedLevel} ${levelDisplay}
-Time: ${time} [${timeframe} timeframe]`;
+    ${alert.ticker} current: ${triggerPrice} ${direction} ${crossedLevel} ${levelDisplay}
+    Time: ${time} [${timeframe} timeframe]`;
   }
 }; 
