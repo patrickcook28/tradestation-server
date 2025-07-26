@@ -12,7 +12,8 @@ const handleOAuthCallback = async (req, res) => {
     code: !!code, 
     token: !!token,
     query: req.query,
-    headers: req.headers
+    headers: req.headers,
+    timestamp: new Date().toISOString()
   });
 
   if (!code) {
@@ -50,7 +51,8 @@ const handleOAuthCallback = async (req, res) => {
     clientId: !!process.env.TRADESTATION_CLIENT_ID,
     clientSecret: !!process.env.TRADESTATION_CLIENT_SECRET,
     redirectUri: process.env.TRADESTATION_REDIRECT_URI,
-    jwtSecret: !!process.env.JWT_SECRET
+    jwtSecret: !!process.env.JWT_SECRET,
+    frontendUrl: process.env.FRONTEND_URL
   });
 
   try {
@@ -93,7 +95,8 @@ const handleOAuthCallback = async (req, res) => {
           console.log('Inserted credentials for user:', req.user.id);
         }
 
-        const redirectUrl = `http://localhost:${process.env.REACT_PORT}/connected?access_token=${access_token}&refresh_token=${refresh_token}`;
+ 
+        const redirectUrl = `${process.env.FRONTEND_URL}/connected?access_token=${access_token}&refresh_token=${refresh_token}`;
         console.log('Redirecting to:', redirectUrl);
         res.redirect(redirectUrl);
       } catch (dbError) {
