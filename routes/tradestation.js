@@ -8,12 +8,32 @@ const handleOAuthCallback = async (req, res) => {
   const code = req.query.code;
   const token = req.query.state;
 
-  if (!code) return res.sendStatus(400);
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    req.user = user;
+  console.log('OAuth callback received:', { 
+    code: !!code, 
+    token: !!token,
+    query: req.query,
+    headers: req.headers
   });
+
+  if (!code) {
+    console.error('No authorization code received');
+    return res.status(400).json({ error: 'No authorization code received' });
+  }
+
+  if (!token) {
+    console.error('No state token received');
+    return res.status(400).json({ error: 'No state token received' });
+  }
+
+  // Verify JWT token
+  try {
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = user;
+    console.log('JWT verified for user:', user.id);
+  } catch (err) {
+    console.error('JWT verification failed:', err.message);
+    return res.status(403).json({ error: 'Invalid or expired token' });
+  }
 
   // Use the authorization code to request an access token
   const token_url = 'https://signin.tradestation.com/oauth/token';
@@ -24,6 +44,14 @@ const handleOAuthCallback = async (req, res) => {
     'code': code,
     'redirect_uri': process.env.TRADESTATION_REDIRECT_URI
   };
+
+  console.log('Requesting access token with redirect URI:', process.env.TRADESTATION_REDIRECT_URI);
+  console.log('Environment variables:', {
+    clientId: !!process.env.TRADESTATION_CLIENT_ID,
+    clientSecret: !!process.env.TRADESTATION_CLIENT_SECRET,
+    redirectUri: process.env.TRADESTATION_REDIRECT_URI,
+    jwtSecret: !!process.env.JWT_SECRET
+  });
 
   try {
     const response = await fetch(token_url, {
@@ -36,31 +64,57 @@ const handleOAuthCallback = async (req, res) => {
 
     if (response.ok) {
       const json_response = await response.json();
+      console.log('TradeStation OAuth response received');
+      
       const access_token = json_response['access_token'];
       const refresh_token = json_response['refresh_token'];
       const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
 
-      pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
-        if(error){
-          console.error(error);
-        } else if( result.rows.length > 0 ) {
-          const query = 'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4';
-          const values = [access_token, refresh_token, expires_at, req.user.id];
-          await pool.query(query, values);
-        } else {
-          const query = 'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)';
-          const values = [req.user.id, access_token, refresh_token, expires_at];
-          await pool.query(query, values);
-        }
-      });
+      if (!access_token || !refresh_token) {
+        console.error('Missing tokens in response:', json_response);
+        return res.status(500).json({ error: 'Invalid response from TradeStation' });
+      }
 
-      res.redirect(`http://localhost:${process.env.REACT_PORT}/connected?access_token=${access_token}&refresh_token=${refresh_token}}`)
+      // Save credentials to database
+      try {
+        const result = await pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id]);
+        
+        if (result.rows.length > 0) {
+          await pool.query(
+            'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4',
+            [access_token, refresh_token, expires_at, req.user.id]
+          );
+          console.log('Updated credentials for user:', req.user.id);
+        } else {
+          await pool.query(
+            'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)',
+            [req.user.id, access_token, refresh_token, expires_at]
+          );
+          console.log('Inserted credentials for user:', req.user.id);
+        }
+
+        const redirectUrl = `http://localhost:${process.env.REACT_PORT}/connected?access_token=${access_token}&refresh_token=${refresh_token}`;
+        console.log('Redirecting to:', redirectUrl);
+        res.redirect(redirectUrl);
+      } catch (dbError) {
+        console.error('Database error:', dbError);
+        res.status(500).json({ error: 'Failed to save credentials' });
+      }
     } else {
-      res.json({ error: await response.json(), message: 'could not get access token' })
+      const errorResponse = await response.json();
+      console.error('TradeStation OAuth error:', errorResponse);
+      res.status(response.status).json({ 
+        error: errorResponse, 
+        message: 'could not get access token',
+        status: response.status
+      });
     }
   } catch (error) {
-    console.error(error);
-    res.json({ error, message: 'could not get access token' })
+    console.error('OAuth callback error:', error);
+    res.status(500).json({ 
+      error: error.message, 
+      message: 'could not get access token' 
+    });
   }
 }
 
