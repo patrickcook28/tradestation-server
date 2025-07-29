@@ -139,7 +139,7 @@ const getUserSettings = async (req, res) => {
         const userId = req.user.id;
         
         const result = await pool.query(
-            'SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, superuser, beta_user, referral_code FROM users WHERE id = $1',
+            'SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code FROM users WHERE id = $1',
             [userId]
         );
 
@@ -153,6 +153,8 @@ const getUserSettings = async (req, res) => {
             maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
             maxLossPerTrade: user.max_loss_per_trade || 0,
             maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            tradeConfirmation: user.trade_confirmation !== false, // Default to true
+            showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code
@@ -171,7 +173,9 @@ const updateUserSettings = async (req, res) => {
             maxLossPerDay, 
             maxLossPerDayEnabled, 
             maxLossPerTrade, 
-            maxLossPerTradeEnabled 
+            maxLossPerTradeEnabled,
+            tradeConfirmation,
+            showTooltips
         } = req.body;
 
         const result = await pool.query(
@@ -179,10 +183,12 @@ const updateUserSettings = async (req, res) => {
                 max_loss_per_day = $1,
                 max_loss_per_day_enabled = $2,
                 max_loss_per_trade = $3,
-                max_loss_per_trade_enabled = $4
-            WHERE id = $5
-            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, superuser, beta_user, referral_code`,
-            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, userId]
+                max_loss_per_trade_enabled = $4,
+                trade_confirmation = $5,
+                show_tooltips = $6
+            WHERE id = $7
+            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code`,
+            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, tradeConfirmation, showTooltips, userId]
         );
 
         if (result.rows.length === 0) {
@@ -195,6 +201,8 @@ const updateUserSettings = async (req, res) => {
             maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
             maxLossPerTrade: user.max_loss_per_trade || 0,
             maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            tradeConfirmation: user.trade_confirmation !== false, // Default to true
+            showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code
@@ -270,11 +278,152 @@ const applyReferralCode = async (req, res) => {
     }
 };
 
+// Get user cost basis data
+const getCostBasisData = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const result = await pool.query(
+            'SELECT cost_basis_data FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const costBasisData = result.rows[0].cost_basis_data || {};
+        return res.json({ costBasisData });
+    } catch (error) {
+        logger.error('Error getting cost basis data:', error);
+        return res.status(500).json({ error: 'Failed to get cost basis data' });
+    }
+};
+
+// Update user cost basis data
+const updateCostBasisData = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { costBasisData } = req.body;
+
+        if (!costBasisData || typeof costBasisData !== 'object') {
+            return res.status(400).json({ error: 'Invalid cost basis data format' });
+        }
+
+        const result = await pool.query(
+            'UPDATE users SET cost_basis_data = $1 WHERE id = $2 RETURNING cost_basis_data',
+            [JSON.stringify(costBasisData), userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.json({ 
+            success: true,
+            costBasisData: result.rows[0].cost_basis_data || {}
+        });
+    } catch (error) {
+        logger.error('Error updating cost basis data:', error);
+        return res.status(500).json({ error: 'Failed to update cost basis data' });
+    }
+};
+
+// Get maintenance mode status
+const getMaintenanceMode = async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT is_enabled, message, enabled_at, enabled_by_user_id FROM maintenance_mode ORDER BY id DESC LIMIT 1'
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({ isEnabled: false, message: 'System is operational' });
+        }
+
+        const maintenance = result.rows[0];
+        return res.json({
+            isEnabled: maintenance.is_enabled,
+            message: maintenance.message,
+            enabledAt: maintenance.enabled_at,
+            enabledByUserId: maintenance.enabled_by_user_id
+        });
+    } catch (error) {
+        logger.error('Error getting maintenance mode:', error);
+        return res.status(500).json({ error: 'Failed to get maintenance mode status' });
+    }
+};
+
+// Update maintenance mode (superuser only)
+const updateMaintenanceMode = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { isEnabled, message } = req.body;
+
+        // Check if user is superuser
+        const userCheck = await pool.query(
+            'SELECT superuser FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        if (!userCheck.rows[0].superuser) {
+            return res.status(403).json({ error: 'Only superusers can control maintenance mode' });
+        }
+
+        if (isEnabled) {
+            // Enable maintenance mode
+            await pool.query(`
+                UPDATE maintenance_mode 
+                SET is_enabled = true, 
+                    message = $1, 
+                    enabled_by_user_id = $2, 
+                    enabled_at = CURRENT_TIMESTAMP,
+                    disabled_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = (SELECT id FROM maintenance_mode ORDER BY id DESC LIMIT 1)
+            `, [message || 'The application is currently under maintenance. Please try again later.', userId]);
+        } else {
+            // Disable maintenance mode
+            await pool.query(`
+                UPDATE maintenance_mode 
+                SET is_enabled = false, 
+                    disabled_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = (SELECT id FROM maintenance_mode ORDER BY id DESC LIMIT 1)
+            `);
+        }
+
+        // Get updated status
+        const result = await pool.query(
+            'SELECT is_enabled, message, enabled_at, enabled_by_user_id FROM maintenance_mode ORDER BY id DESC LIMIT 1'
+        );
+
+        const maintenance = result.rows[0];
+        return res.json({
+            success: true,
+            isEnabled: maintenance.is_enabled,
+            message: maintenance.message,
+            enabledAt: maintenance.enabled_at,
+            enabledByUserId: maintenance.enabled_by_user_id
+        });
+    } catch (error) {
+        logger.error('Error updating maintenance mode:', error);
+        return res.status(500).json({ error: 'Failed to update maintenance mode' });
+    }
+};
+
 module.exports = {
     register,
     login,
     authenticateToken,
     getUserSettings,
     updateUserSettings,
-    applyReferralCode
+    applyReferralCode,
+    getCostBasisData,
+    updateCostBasisData,
+    getMaintenanceMode,
+    updateMaintenanceMode
 };

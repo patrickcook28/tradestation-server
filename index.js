@@ -70,6 +70,10 @@ app.post("/auth/login", routes.authRoutes.login);
 app.get("/auth/settings", authenticateToken, routes.authRoutes.getUserSettings);
 app.put("/auth/settings", authenticateToken, routes.authRoutes.updateUserSettings);
 app.post("/auth/apply_referral_code", authenticateToken, routes.authRoutes.applyReferralCode);
+app.get("/auth/cost_basis", authenticateToken, routes.authRoutes.getCostBasisData);
+app.put("/auth/cost_basis", authenticateToken, routes.authRoutes.updateCostBasisData);
+app.get("/auth/maintenance", routes.authRoutes.getMaintenanceMode);
+app.put("/auth/maintenance", authenticateToken, routes.authRoutes.updateMaintenanceMode);
 
 // Ticker options routes
 app.get('/ticker_options', routes.tradeStationRoutes.getTickerOptions);
