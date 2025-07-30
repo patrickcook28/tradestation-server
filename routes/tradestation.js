@@ -70,7 +70,9 @@ const handleOAuthCallback = async (req, res) => {
           );
         }
 
+        
         const redirectUrl = `${process.env.FRONTEND_URL}/connected?access_token=${access_token}&refresh_token=${refresh_token}`;
+        console.log('Redirecting to:', redirectUrl);
         res.redirect(redirectUrl);
       } catch (dbError) {
         res.status(500).json({ error: 'Failed to save credentials' });

@@ -53,25 +53,38 @@ const register = async (req, res) => {
         }
 
         pool.query(
-            'INSERT INTO users (email, password, beta_user, referral_code) VALUES ($1, $2, $3, $4)',
+            'INSERT INTO users (email, password, beta_user, referral_code) VALUES ($1, $2, $3, $4) RETURNING *',
             [email, hashedPassword, beta_user, final_referral_code], 
             (error, result) => {
                 if(error) {
+                    console.error('Database error during user creation:', error);
                     return res.status(400).json({ error: 'Failed to create new user' })
                 } else {
-                                    return res.json({ 
-                    success: true, 
-                    beta_user: beta_user,
-                    message: beta_user ? 'Welcome to the beta!' : 'Account created successfully',
-                    id: result.rows[0].id,
-                    email: email,
-                    maxLossPerDay: 0,
-                    maxLossPerDayEnabled: false,
-                    maxLossPerTrade: 0,
-                    maxLossPerTradeEnabled: false,
-                    superuser: false,
-                    referral_code: final_referral_code
-                })
+                    console.log('Insert result:', result);
+                    console.log('Result rows:', result.rows);
+                    console.log('Result rows length:', result.rows.length);
+                    
+                    if (!result.rows || result.rows.length === 0) {
+                        console.error('No rows returned from INSERT');
+                        return res.status(500).json({ error: 'User created but no data returned' })
+                    }
+                    
+                    const newUser = result.rows[0];
+                    console.log('New user data:', newUser);
+                    
+                    return res.json({ 
+                        success: true, 
+                        beta_user: beta_user,
+                        message: beta_user ? 'Welcome to the beta!' : 'Account created successfully',
+                        id: newUser.id,
+                        email: email,
+                        maxLossPerDay: 0,
+                        maxLossPerDayEnabled: false,
+                        maxLossPerTrade: 0,
+                        maxLossPerTradeEnabled: false,
+                        superuser: false,
+                        referral_code: final_referral_code
+                    })
                 }
             }
         )        
@@ -97,7 +110,7 @@ const login = async (req, res) => {
         }
 
         let token = jwt.sign({ id: user.id }, process.env.JWT_SECRET)
-
+        console.log('Login successful, returning user:', user);
         return res.json({
             token,
             id: user.id,
