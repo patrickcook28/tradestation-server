@@ -57,16 +57,25 @@ function getCurrentContractSymbol(product, date = new Date()) {
  */
 function getCommonFuturesContracts(date = new Date()) {
   const futures = [
+    // Equity index futures (E-mini & Micro E-mini)
+    { symbol: 'MES', name: 'Micro E-mini S&P 500' },
     { symbol: 'MNQ', name: 'Micro E-mini Nasdaq-100' },
-    { symbol: 'ES', name: 'E-mini S&P 500' },
-    { symbol: 'NQ', name: 'E-mini Nasdaq-100' },
-    { symbol: 'YM', name: 'E-mini Dow Jones' },
+    { symbol: 'ES',  name: 'E-mini S&P 500' },
+    { symbol: 'NQ',  name: 'E-mini Nasdaq-100' },
+    { symbol: 'YM',  name: 'E-mini Dow Jones' },
+    { symbol: 'MYM', name: 'Micro E-mini Dow Jones' },
     { symbol: 'RTY', name: 'E-mini Russell 2000' },
-    { symbol: 'CL', name: 'Crude Oil' },
-    { symbol: 'GC', name: 'Gold' },
-    { symbol: 'SI', name: 'Silver' },
-    { symbol: 'ZB', name: 'U.S. Treasury Bond' },
-    { symbol: 'ZN', name: 'U.S. Treasury Note' }
+    { symbol: 'M2K', name: 'Micro E-mini Russell 2000' },
+
+    // Energies
+    { symbol: 'CL',  name: 'Crude Oil' },
+    { symbol: 'MCL', name: 'Micro WTI Crude Oil' },
+
+    // Metals
+    { symbol: 'GC',  name: 'Gold' },
+    { symbol: 'MGC', name: 'Micro Gold' },
+    { symbol: 'SI',  name: 'Silver' },
+    { symbol: 'SIL', name: 'Micro Silver' },
   ];
   
   return futures.map(future => ({

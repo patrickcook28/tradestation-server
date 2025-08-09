@@ -12,9 +12,7 @@ const RealtimeAlertChecker = require('./workers/realtimeAlertChecker');
 const logger = require('./config/logging');
 const fs = require('fs');
 const hbs = require('hbs');
-const { tradeStationRoutes, tradeAlertsRoutes } = require('./routes');
 const { authenticateToken } = require('./routes/auth');
-const referralRoutes = require('./routes/referral');
 
 dotenv.config({ path: './.env'});
 
@@ -79,26 +77,29 @@ app.put("/auth/maintenance", authenticateToken, routes.authRoutes.updateMaintena
 app.get('/ticker_options', routes.tradeStationRoutes.getTickerOptions);
 app.get('/ticker_contracts/:ticker', routes.tradeStationRoutes.getTickerContracts);
 
-app.get('/trade_alerts', authenticateToken, tradeAlertsRoutes.getTradeAlerts);
-app.post('/trade_alerts', authenticateToken, tradeAlertsRoutes.createTradeAlert);
-app.post('/std_dev_alerts', authenticateToken, tradeAlertsRoutes.createStdDevAlert);
-app.post('/indicator_alerts', authenticateToken, tradeAlertsRoutes.createTechnicalIndicatorAlert);
-app.put('/trade_alerts/:id', authenticateToken, tradeAlertsRoutes.updateTradeAlert);
-app.delete('/trade_alerts/:id', authenticateToken, tradeAlertsRoutes.deleteTradeAlert);
+app.get('/trade_alerts', authenticateToken, routes.tradeAlertsRoutes.getTradeAlerts);
+app.post('/trade_alerts', authenticateToken, routes.tradeAlertsRoutes.createTradeAlert);
+app.post('/std_dev_alerts', authenticateToken, routes.tradeAlertsRoutes.createStdDevAlert);
+app.post('/indicator_alerts', authenticateToken, routes.tradeAlertsRoutes.createTechnicalIndicatorAlert);
+app.put('/trade_alerts/:id', authenticateToken, routes.tradeAlertsRoutes.updateTradeAlert);
+app.delete('/trade_alerts/:id', authenticateToken, routes.tradeAlertsRoutes.deleteTradeAlert);
 
-app.get('/std_dev_levels/:ticker', authenticateToken, tradeAlertsRoutes.getStdDevLevels);
-app.post('/std_dev_levels/:ticker/update_all', authenticateToken, tradeAlertsRoutes.updateAllTimeframesForTicker);
-app.get('/alert_logs', authenticateToken, tradeAlertsRoutes.getAlertLogs);
-app.post('/run_alert_checker', authenticateToken, tradeAlertsRoutes.runAlertChecker);
-app.get('/debug/credentials', tradeAlertsRoutes.debugCredentials);
+app.get('/std_dev_levels/:ticker', authenticateToken, routes.tradeAlertsRoutes.getStdDevLevels);
+app.post('/std_dev_levels/:ticker/update_all', authenticateToken, routes.tradeAlertsRoutes.updateAllTimeframesForTicker);
+app.get('/alert_logs', authenticateToken, routes.tradeAlertsRoutes.getAlertLogs);
+app.post('/run_alert_checker', authenticateToken, routes.tradeAlertsRoutes.runAlertChecker);
+app.get('/debug/credentials', routes.tradeAlertsRoutes.debugCredentials);
+
+// Client config routes
+app.get('/client_config', authenticateToken, routes.clientConfigRoutes.getInitialConfig);
 
 // Add all tradestation routes
-app.get('/', tradeStationRoutes.handleOAuthCallback);
-app.get('/tradestation/credentials', authenticateToken, tradeStationRoutes.getStoredCredentials);
-app.put('/tradestation/refresh_token', authenticateToken, tradeStationRoutes.refreshAccessToken);
+app.get('/', routes.tradeStationRoutes.handleOAuthCallback);
+app.get('/tradestation/credentials', authenticateToken, routes.tradeStationRoutes.getStoredCredentials);
+app.put('/tradestation/refresh_token', authenticateToken, routes.tradeStationRoutes.refreshAccessToken);
 
 // Add referral routes
-app.use('/referral', referralRoutes);
+app.use('/referral', routes.referralRoutes);
 
 // Start the real-time alert checker
 const realtimeAlertChecker = new RealtimeAlertChecker();
