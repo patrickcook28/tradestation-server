@@ -101,6 +101,9 @@ app.put('/tradestation/refresh_token', authenticateToken, routes.tradeStationRou
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
 
+// Watchlists routes (all require auth within router)
+app.use('/', routes.watchlistsRouter);
+
 // Start the real-time alert checker
 const realtimeAlertChecker = new RealtimeAlertChecker();
 realtimeAlertChecker.start().catch(error => {

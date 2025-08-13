@@ -146,13 +146,16 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Get user settings
+// Get user settings (includes app_settings and account_defaults)
 const getUserSettings = async (req, res) => {
     try {
         const userId = req.user.id;
         
         const result = await pool.query(
-            'SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code FROM users WHERE id = $1',
+            `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
+                    trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
+                    app_settings, account_defaults
+             FROM users WHERE id = $1`,
             [userId]
         );
 
@@ -170,7 +173,9 @@ const getUserSettings = async (req, res) => {
             showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
-            referral_code: user.referral_code
+            referral_code: user.referral_code,
+            appSettings: user.app_settings || {},
+            accountDefaults: user.account_defaults || {}
         });
     } catch (error) {
         logger.error('Error getting user settings:', error);
@@ -178,7 +183,7 @@ const getUserSettings = async (req, res) => {
     }
 };
 
-// Update user settings
+// Update user settings (and optionally app_settings/account_defaults)
 const updateUserSettings = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -188,20 +193,24 @@ const updateUserSettings = async (req, res) => {
             maxLossPerTrade, 
             maxLossPerTradeEnabled,
             tradeConfirmation,
-            showTooltips
+            showTooltips,
+            appSettings, // JSON object of global user settings (e.g., showStdDevLines, showLiquidity, showOrders, sessionTemplate)
+            accountDefaults // JSON object keyed by accountId with risk/riskPercentage etc.
         } = req.body;
 
         const result = await pool.query(
             `UPDATE users SET 
-                max_loss_per_day = $1,
-                max_loss_per_day_enabled = $2,
-                max_loss_per_trade = $3,
-                max_loss_per_trade_enabled = $4,
-                trade_confirmation = $5,
-                show_tooltips = $6
-            WHERE id = $7
-            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code`,
-            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, tradeConfirmation, showTooltips, userId]
+                max_loss_per_day = COALESCE($1, max_loss_per_day),
+                max_loss_per_day_enabled = COALESCE($2, max_loss_per_day_enabled),
+                max_loss_per_trade = COALESCE($3, max_loss_per_trade),
+                max_loss_per_trade_enabled = COALESCE($4, max_loss_per_trade_enabled),
+                trade_confirmation = COALESCE($5, trade_confirmation),
+                show_tooltips = COALESCE($6, show_tooltips),
+                app_settings = COALESCE($7::jsonb, app_settings),
+                account_defaults = COALESCE($8::jsonb, account_defaults)
+            WHERE id = $9
+            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code, app_settings, account_defaults`,
+            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, tradeConfirmation, showTooltips, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
         );
 
         if (result.rows.length === 0) {
@@ -218,7 +227,9 @@ const updateUserSettings = async (req, res) => {
             showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
-            referral_code: user.referral_code
+            referral_code: user.referral_code,
+            appSettings: user.app_settings || {},
+            accountDefaults: user.account_defaults || {}
         });
     } catch (error) {
         logger.error('Error updating user settings:', error);
