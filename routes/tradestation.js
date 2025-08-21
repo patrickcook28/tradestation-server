@@ -294,6 +294,141 @@ const refreshAccessTokenForUser = async (userId) => {
   return { access_token, expires_at };
 };
 
+const { respondWithTradestation } = require('../utils/tradestationProxy');
+
+// Proxy: Get accounts from TradeStation using stored access token (no refresh logic)
+const getAccounts = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: '/brokerage/accounts',
+    paperTrading,
+  });
+};
+
+// Proxy: Get balances for a specific account
+const getBalances = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { accountId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/brokerage/accounts/${accountId}/balances`,
+    paperTrading,
+  });
+};
+
+// Proxy: Get positions for a specific account
+const getPositions = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { accountId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/brokerage/accounts/${accountId}/positions`,
+    paperTrading,
+  });
+};
+
+// Proxy: Get orders for a specific account
+const getOrders = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { accountId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/brokerage/accounts/${accountId}/orders`,
+    paperTrading,
+  });
+};
+
+// Proxy: Get historical orders (supports since, pageSize, nextToken)
+const getHistoricalOrders = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { accountId } = req.params;
+  const { since, pageSize, nextToken } = req.query;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/brokerage/accounts/${accountId}/historicalorders`,
+    paperTrading,
+    query: { since, pageSize, nextToken },
+  });
+};
+
+// Proxy: Market data - ticker details
+const getTickerDetails = async (req, res) => {
+  const { ticker } = req.params;
+  // Market data uses live base; ignore paperTrading
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/marketdata/symbols/${ticker}`,
+    paperTrading: false,
+  });
+};
+
+// Proxy: Market data - bar charts
+const getBarCharts = async (req, res) => {
+  const { ticker } = req.params;
+  const { interval, unit, barsback, sessiontemplate } = req.query;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/marketdata/barcharts/${ticker}`,
+    paperTrading: false,
+    query: { interval, unit, barsback, sessiontemplate },
+  });
+};
+
+// Proxy: Order execution - create order
+const createOrder = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  return respondWithTradestation(req, res, {
+    method: 'POST',
+    path: `/orderexecution/orders`,
+    paperTrading,
+    body: req.body,
+  });
+};
+
+// Proxy: Order execution - get/update/delete a specific order
+const getOrder = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { orderId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/orderexecution/orders/${orderId}`,
+    paperTrading,
+  });
+};
+
+const updateOrder = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { orderId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'PUT',
+    path: `/orderexecution/orders/${orderId}`,
+    paperTrading,
+    body: req.body,
+  });
+};
+
+const cancelOrder = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  const { orderId } = req.params;
+  return respondWithTradestation(req, res, {
+    method: 'DELETE',
+    path: `/orderexecution/orders/${orderId}`,
+    paperTrading,
+  });
+};
+
+// Proxy: Order execution - create order group (brackets)
+const createOrderGroup = async (req, res) => {
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  return respondWithTradestation(req, res, {
+    method: 'POST',
+    path: `/orderexecution/ordergroups`,
+    paperTrading,
+    body: req.body,
+  });
+};
+
 module.exports = {
   handleOAuthCallback,
   refreshAccessToken,
@@ -301,4 +436,16 @@ module.exports = {
   getTickerOptions,
   getTickerContracts,
   refreshAccessTokenForUser,
-}
+  getAccounts,
+  getBalances,
+  getPositions,
+  getOrders,
+  getHistoricalOrders,
+  getTickerDetails,
+  getBarCharts,
+  createOrder,
+  getOrder,
+  updateOrder,
+  cancelOrder,
+  createOrderGroup,
+};

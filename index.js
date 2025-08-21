@@ -97,6 +97,18 @@ app.get('/client_config', authenticateToken, routes.clientConfigRoutes.getInitia
 app.get('/', routes.tradeStationRoutes.handleOAuthCallback);
 app.get('/tradestation/credentials', authenticateToken, routes.tradeStationRoutes.getStoredCredentials);
 app.put('/tradestation/refresh_token', authenticateToken, routes.tradeStationRoutes.refreshAccessToken);
+app.get('/tradestation/accounts', authenticateToken, routes.tradeStationRoutes.getAccounts);
+app.get('/tradestation/accounts/:accountId/balances', authenticateToken, routes.tradeStationRoutes.getBalances);
+app.get('/tradestation/accounts/:accountId/positions', authenticateToken, routes.tradeStationRoutes.getPositions);
+app.get('/tradestation/accounts/:accountId/orders', authenticateToken, routes.tradeStationRoutes.getOrders);
+app.get('/tradestation/accounts/:accountId/historicalorders', authenticateToken, routes.tradeStationRoutes.getHistoricalOrders);
+app.get('/tradestation/marketdata/symbols/:ticker', authenticateToken, routes.tradeStationRoutes.getTickerDetails);
+app.get('/tradestation/marketdata/barcharts/:ticker', authenticateToken, routes.tradeStationRoutes.getBarCharts);
+app.post('/tradestation/orders', authenticateToken, routes.tradeStationRoutes.createOrder);
+app.get('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationRoutes.getOrder);
+app.put('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationRoutes.updateOrder);
+app.delete('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationRoutes.cancelOrder);
+app.post('/tradestation/ordergroups', authenticateToken, routes.tradeStationRoutes.createOrderGroup);
 
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
