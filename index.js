@@ -42,6 +42,29 @@ app.use(express.static(publicDir));
 app.use(express.urlencoded({extended: 'false'}));
 app.use(express.json());
 
+// Simple request logger: method, url, query, and body
+app.use((req, res, next) => {
+  try {
+    const method = req.method;
+    const url = req.originalUrl || req.url;
+    const query = Object.keys(req.query || {}).length ? ` query=${JSON.stringify(req.query)}` : '';
+    // Avoid logging sensitive fields explicitly by redacting common keys
+    const redactKeys = ['password', 'password_confirm', 'client_secret'];
+    let body = req.body;
+    if (body && typeof body === 'object') {
+      body = JSON.parse(JSON.stringify(body));
+      for (const key of redactKeys) {
+        if (body[key] !== undefined) body[key] = '[REDACTED]';
+      }
+    }
+    const bodyStr = body && Object.keys(body).length ? ` body=${JSON.stringify(body)}` : '';
+    console.log(`[API] ${method} ${url}${query}${bodyStr}`);
+  } catch (e) {
+    try { console.log('[API] request logging error:', e.message); } catch (_) {}
+  }
+  next();
+});
+
 // Set up Handlebars as the view engine
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
@@ -109,6 +132,11 @@ app.get('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationR
 app.put('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationRoutes.updateOrder);
 app.delete('/tradestation/orders/:orderId', authenticateToken, routes.tradeStationRoutes.cancelOrder);
 app.post('/tradestation/ordergroups', authenticateToken, routes.tradeStationRoutes.createOrderGroup);
+// Streaming market data - quotes
+app.get('/tradestation/stream/quotes', authenticateToken, routes.tradeStationRoutes.streamQuotes);
+// Streaming brokerage data - positions and orders
+app.get('/tradestation/stream/accounts/:accountId/positions', authenticateToken, routes.tradeStationRoutes.streamPositions);
+app.get('/tradestation/stream/accounts/:accountId/orders', authenticateToken, routes.tradeStationRoutes.streamOrders);
 
 // Add referral routes
 app.use('/referral', routes.referralRoutes);

@@ -429,6 +429,54 @@ const createOrderGroup = async (req, res) => {
   });
 };
 
+// Stream: Market data - quotes (proxy streaming response to client)
+const { streamTradestation } = require('../utils/tradestationProxy');
+const quoteStreamManager = require('../utils/quoteStreamManager');
+const streamQuotes = async (req, res) => {
+  const { symbols } = req.query;
+  if (!symbols || String(symbols).trim().length === 0) {
+    return res.status(400).json({ error: 'symbols query param is required' });
+  }
+  // Normalize and dedupe symbols before proxying
+  const decoded = decodeURIComponent(String(symbols));
+  const list = decoded.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  const unique = Array.from(new Set(list));
+  const joined = unique.join(',');
+  // Ensure single upstream per user; broadcast to this client
+  return quoteStreamManager.addSubscriber(String(req.user.id), joined, res).catch(err => {
+    const status = err.status || 500;
+    return res.status(status).json(err.response || { error: err.message || 'Failed to start quote stream' });
+  });
+};
+
+// Stream: Brokerage positions per account (backend-proxied)
+const positionsStreamManager = require('../utils/positionsStreamManager');
+const streamPositions = async (req, res) => {
+  const { accountId } = req.params;
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId is required' });
+  }
+  return positionsStreamManager.addSubscriber(String(req.user.id), accountId, paperTrading, res).catch(err => {
+    const status = err.status || 500;
+    return res.status(status).json(err.response || { error: err.message || 'Failed to start positions stream' });
+  });
+};
+
+// Stream: Brokerage orders per account (backend-proxied)
+const ordersStreamManager = require('../utils/ordersStreamManager');
+const streamOrders = async (req, res) => {
+  const { accountId } = req.params;
+  const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
+  if (!accountId) {
+    return res.status(400).json({ error: 'accountId is required' });
+  }
+  return ordersStreamManager.addSubscriber(String(req.user.id), accountId, paperTrading, res).catch(err => {
+    const status = err.status || 500;
+    return res.status(status).json(err.response || { error: err.message || 'Failed to start orders stream' });
+  });
+};
+
 module.exports = {
   handleOAuthCallback,
   refreshAccessToken,
@@ -448,4 +496,7 @@ module.exports = {
   updateOrder,
   cancelOrder,
   createOrderGroup,
+  streamQuotes,
+  streamPositions,
+  streamOrders,
 };
