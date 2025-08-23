@@ -457,7 +457,7 @@ const streamPositions = async (req, res) => {
   if (!accountId) {
     return res.status(400).json({ error: 'accountId is required' });
   }
-  return positionsStreamManager.addSubscriber(String(req.user.id), accountId, paperTrading, res).catch(err => {
+  return positionsStreamManager.addSubscriber(String(req.user.id), { accountId, paperTrading }, res).catch(err => {
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start positions stream' });
   });
@@ -471,9 +471,24 @@ const streamOrders = async (req, res) => {
   if (!accountId) {
     return res.status(400).json({ error: 'accountId is required' });
   }
-  return ordersStreamManager.addSubscriber(String(req.user.id), accountId, paperTrading, res).catch(err => {
+  return ordersStreamManager.addSubscriber(String(req.user.id), { accountId, paperTrading }, res).catch(err => {
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start orders stream' });
+  });
+};
+
+// Stream: Bars (market data barcharts)
+const barsStreamManager = require('../utils/barsStreamManager');
+const streamBars = async (req, res) => {
+  const { ticker } = req.params;
+  const { interval, unit, barsback, sessiontemplate } = req.query;
+  if (!ticker || !interval || !unit) {
+    return res.status(400).json({ error: 'ticker, interval, and unit are required' });
+  }
+  const params = { ticker, interval, unit, barsback, sessiontemplate };
+  return barsStreamManager.addSubscriber(String(req.user.id), params, res).catch(err => {
+    const status = err.status || 500;
+    return res.status(status).json(err.response || { error: err.message || 'Failed to start bars stream' });
   });
 };
 
@@ -499,4 +514,5 @@ module.exports = {
   streamQuotes,
   streamPositions,
   streamOrders,
+  streamBars,
 };

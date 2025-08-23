@@ -137,6 +137,7 @@ app.get('/tradestation/stream/quotes', authenticateToken, routes.tradeStationRou
 // Streaming brokerage data - positions and orders
 app.get('/tradestation/stream/accounts/:accountId/positions', authenticateToken, routes.tradeStationRoutes.streamPositions);
 app.get('/tradestation/stream/accounts/:accountId/orders', authenticateToken, routes.tradeStationRoutes.streamOrders);
+app.get('/tradestation/marketdata/stream/barcharts/:ticker', authenticateToken, routes.tradeStationRoutes.streamBars);
 
 // Add referral routes
 app.use('/referral', routes.referralRoutes);

@@ -154,7 +154,8 @@ const getUserSettings = async (req, res) => {
         const result = await pool.query(
             `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
                     trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
-                    app_settings, account_defaults
+                    app_settings, account_defaults,
+                    EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
              FROM users WHERE id = $1`,
             [userId]
         );
@@ -174,6 +175,7 @@ const getUserSettings = async (req, res) => {
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,
+            hasTradeStationCredentials: user.has_tradestation_credentials === true,
             appSettings: user.app_settings || {},
             accountDefaults: user.account_defaults || {}
         });
