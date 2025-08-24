@@ -145,6 +145,9 @@ app.use('/referral', routes.referralRoutes);
 // Watchlists routes (all require auth within router)
 app.use('/', routes.watchlistsRouter);
 
+// Trade journals routes (all require auth within router)
+app.use('/', routes.tradeJournalsRouter);
+
 // Start the real-time alert checker
 const realtimeAlertChecker = new RealtimeAlertChecker();
 realtimeAlertChecker.start().catch(error => {

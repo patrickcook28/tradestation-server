@@ -5,6 +5,7 @@ const technicalIndicatorsRoutes = require('./technicalIndicators');
 const referralRoutes = require('./referral');
 const clientConfigRoutes = require('./clientConfig');
 const watchlistsRouter = require('./watchlists');
+const tradeJournalsRouter = require('./tradeJournals');
 
 module.exports = {
     authRoutes,
@@ -13,5 +14,6 @@ module.exports = {
     technicalIndicatorsRoutes,
     referralRoutes,
     clientConfigRoutes,
-    watchlistsRouter
+    watchlistsRouter,
+    tradeJournalsRouter
 };
