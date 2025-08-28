@@ -10,6 +10,6 @@ const mux = new StreamMultiplexer({
   })
 });
 
-module.exports = mux;
+module.exports = { ...mux, addSubscriber: mux.addExclusiveSubscriber.bind(mux) };
 
 

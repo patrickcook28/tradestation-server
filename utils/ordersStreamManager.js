@@ -6,6 +6,6 @@ const mux = new StreamMultiplexer({
   buildRequest: (userId, { accountId, paperTrading }) => ({ path: `/brokerage/stream/accounts/${accountId}/orders`, paperTrading: !!paperTrading })
 });
 
-module.exports = mux;
+module.exports = { ...mux, addSubscriber: mux.addExclusiveSubscriber.bind(mux) };
 
 

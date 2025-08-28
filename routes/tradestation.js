@@ -71,7 +71,7 @@ const handleOAuthCallback = async (req, res) => {
         }
 
         
-        const redirectUrl = `${process.env.FRONTEND_URL}/connected?access_token=${access_token}&refresh_token=${refresh_token}`;
+        const redirectUrl = `${process.env.FRONTEND_URL}/trade`;
         console.log('Redirecting to:', redirectUrl);
         res.redirect(redirectUrl);
       } catch (dbError) {

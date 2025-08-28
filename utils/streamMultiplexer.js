@@ -18,6 +18,12 @@ class StreamMultiplexer {
     this.keyToConnection = new Map();
     /** @type {Map<string, Promise<void>>} */
     this.pendingOpens = new Map();
+    /**
+     * Tracks the most recent key per user for streams that should be exclusive
+     * (one active upstream per user). Used by addExclusiveSubscriber.
+     * @type {Map<string, string>}
+     */
+    this.userToLastKey = new Map();
   }
 
   async ensureUpstream(userId, deps) {
@@ -44,7 +50,23 @@ class StreamMultiplexer {
     this.pendingOpens.set(key, creationLock);
 
     const { path, paperTrading = false, query } = this.buildRequest(userId, deps) || {};
-    const accessToken = await getUserAccessToken(userId);
+    if (!path) {
+      const err = new Error('Invalid upstream request');
+      err.status = 400; err.response = { error: 'Missing path for upstream request' };
+      try { rejectLock(err); } catch (_) {}
+      this.pendingOpens.delete(key);
+      throw err;
+    }
+    let accessToken;
+    try {
+      accessToken = await getUserAccessToken(userId);
+    } catch (tokenErr) {
+      const err = new Error('Failed to acquire access token');
+      err.status = 401; err.response = { error: 'Unauthorized', details: tokenErr && tokenErr.message };
+      try { rejectLock(err); } catch (_) {}
+      this.pendingOpens.delete(key);
+      throw err;
+    }
     const url = buildUrl(!!paperTrading, path, query);
 
     let upstream;
@@ -58,13 +80,23 @@ class StreamMultiplexer {
           upstream = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` } });
         } catch (_) {}
       }
-    } finally {}
+    } catch (networkErr) {
+      const err = new Error('Upstream fetch failed');
+      err.status = 502; err.response = { error: 'Bad Gateway', details: networkErr && networkErr.message };
+      try { rejectLock(err); } catch (_) {}
+      this.pendingOpens.delete(key);
+      throw err;
+    }
 
-    if (!upstream.ok) {
-      const text = await upstream.text();
+    if (!upstream || !upstream.ok) {
+      let text = '';
+      try { text = upstream && upstream.text ? await upstream.text() : ''; } catch (_) {}
       let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
-      const err = new Error('Upstream not OK');
-      err.status = upstream.status; err.response = data;
+      // Provide more helpful messages by status
+      const status = upstream && typeof upstream.status === 'number' ? upstream.status : 500;
+      const friendly = status === 403 ? 'Forbidden' : (status === 429 ? 'Rate limited' : (status === 404 ? 'Not found' : 'Upstream not OK'));
+      const err = new Error(friendly);
+      err.status = status; err.response = data && Object.keys(data).length ? data : { error: friendly };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
       throw err;
@@ -97,6 +129,12 @@ class StreamMultiplexer {
   async addSubscriber(userId, deps, res) {
     const key = this.makeKey(userId, deps);
     let state;
+    // Prevent concurrent subscriber mutations for the same key
+    if (!this.pendingOpens.has(key)) {
+      this.pendingOpens.set(key, Promise.resolve());
+    }
+    const lock = this.pendingOpens.get(key);
+    try { await lock; } catch (_) {}
     try {
       state = await this.ensureUpstream(userId, deps);
     } catch (err) {
@@ -133,6 +171,40 @@ class StreamMultiplexer {
       }
     };
     res.on('close', onClose);
+    // Release lock
+    try { this.pendingOpens.delete(key); } catch (_) {}
+  }
+
+  /**
+   * Add a subscriber while enforcing only one active upstream per user.
+   * If the computed key changes for this user, close the old upstream first.
+   */
+  async addExclusiveSubscriber(userId, deps, res) {
+    const nextKey = this.makeKey(userId, deps);
+    const prevKey = this.userToLastKey.get(userId);
+    if (prevKey && prevKey !== nextKey) {
+      try { this.closeKey(prevKey); } catch (_) {}
+    }
+    this.userToLastKey.set(userId, nextKey);
+    return this.addSubscriber(userId, deps, res);
+  }
+
+  /**
+   * Force-close a specific upstream by key, ending all subscribers.
+   * Safe to call if key does not exist.
+   */
+  closeKey(key) {
+    const state = this.keyToConnection.get(key);
+    if (!state) return;
+    try {
+      if (state.readable && state.readable.destroy) state.readable.destroy();
+    } catch (_) {}
+    try {
+      for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
+    } catch (_) {}
+    try { state.subscribers && state.subscribers.clear && state.subscribers.clear(); } catch (_) {}
+    this.keyToConnection.delete(key);
+    console.log(`[${this.name}] Force-closed upstream for key=${key}. Active upstreams=${this.keyToConnection.size}`);
   }
 }
 
