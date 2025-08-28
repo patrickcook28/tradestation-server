@@ -6,8 +6,18 @@ const LOG_LEVELS = {
   DEBUG: 3
 };
 
-// Set this to control logging verbosity
-const CURRENT_LOG_LEVEL = LOG_LEVELS.DEBUG;
+// Resolve log level from env (LOG_LEVEL=ERROR|WARN|INFO|DEBUG), default to DEBUG for dev
+const envLogLevel = process.env.LOG_LEVEL && LOG_LEVELS[process.env.LOG_LEVEL.toUpperCase()] !== undefined
+  ? LOG_LEVELS[process.env.LOG_LEVEL.toUpperCase()]
+  : (process.env.NODE_ENV === 'production' ? LOG_LEVELS.INFO : LOG_LEVELS.DEBUG);
+const CURRENT_LOG_LEVEL = envLogLevel;
+
+// Toggle HTTP request logging with LOG_HTTP or LOG_REQUESTS (true/1/on)
+const HTTP_LOGGING_ENABLED = (() => {
+  const raw = (process.env.LOG_HTTP || process.env.LOG_REQUESTS || '');
+  const v = String(raw).toLowerCase();
+  return v === '1' || v === 'true' || v === 'on' || (process.env.NODE_ENV !== 'production' && v === '');
+})();
 
 const logger = {
   error: (message, ...args) => {
@@ -56,5 +66,8 @@ const logger = {
     }
   }
 };
+
+logger.isHttpLoggingEnabled = () => HTTP_LOGGING_ENABLED;
+logger.levels = LOG_LEVELS;
 
 module.exports = logger; 

@@ -42,26 +42,48 @@ app.use(express.static(publicDir));
 app.use(express.urlencoded({extended: 'false'}));
 app.use(express.json());
 
-// Simple request logger: method, url, query, and body
+// Toggleable HTTP request logger
+if (logger.isHttpLoggingEnabled && logger.isHttpLoggingEnabled()) {
+  app.use((req, res, next) => {
+    try {
+      const startedAt = Date.now();
+      const method = req.method;
+      const url = req.originalUrl || req.url;
+      const query = Object.keys(req.query || {}).length ? ` query=${JSON.stringify(req.query)}` : '';
+      // Avoid logging sensitive fields explicitly by redacting common keys
+      const redactKeys = ['password', 'password_confirm', 'client_secret', 'token', 'access_token', 'refresh_token'];
+      let body = req.body;
+      if (body && typeof body === 'object') {
+        body = JSON.parse(JSON.stringify(body));
+        for (const key of redactKeys) {
+          if (body[key] !== undefined) body[key] = '[REDACTED]';
+        }
+      }
+      const bodyStr = body && Object.keys(body).length ? ` body=${JSON.stringify(body)}` : '';
+
+      // Log on request start
+      console.log(`[API] ${method} ${url}${query}${bodyStr}`);
+
+      // Also log completion with status and duration
+      res.on('finish', () => {
+        const ms = Date.now() - startedAt;
+        console.log(`[API] ${method} ${url} -> ${res.statusCode} ${ms}ms`);
+      });
+    } catch (e) {
+      try { console.log('[API] request logging error:', e.message); } catch (_) {}
+    }
+    next();
+  });
+}
+
+// Specific diagnostic log for positions stream route before auth middleware
 app.use((req, res, next) => {
   try {
-    const method = req.method;
-    const url = req.originalUrl || req.url;
-    const query = Object.keys(req.query || {}).length ? ` query=${JSON.stringify(req.query)}` : '';
-    // Avoid logging sensitive fields explicitly by redacting common keys
-    const redactKeys = ['password', 'password_confirm', 'client_secret'];
-    let body = req.body;
-    if (body && typeof body === 'object') {
-      body = JSON.parse(JSON.stringify(body));
-      for (const key of redactKeys) {
-        if (body[key] !== undefined) body[key] = '[REDACTED]';
-      }
+    const path = req.path || req.originalUrl || '';
+    if (typeof path === 'string' && path.startsWith('/tradestation/stream/accounts/') && path.endsWith('/positions')) {
+      console.log(`[Index] Pre-auth positions route hit: ${req.method} ${req.originalUrl}`);
     }
-    const bodyStr = body && Object.keys(body).length ? ` body=${JSON.stringify(body)}` : '';
-    console.log(`[API] ${method} ${url}${query}${bodyStr}`);
-  } catch (e) {
-    try { console.log('[API] request logging error:', e.message); } catch (_) {}
-  }
+  } catch (_) {}
   next();
 });
 

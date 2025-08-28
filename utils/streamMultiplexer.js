@@ -14,7 +14,7 @@ class StreamMultiplexer {
     this.name = name;
     this.makeKey = makeKey;
     this.buildRequest = buildRequest;
-    /** @type {Map<string, { key: string, subscribers: Set<any>, upstream: any, readable: any }>} */
+    /** @type {Map<string, { key: string, subscribers: Set<any>, upstream: any, readable: any, lastActivityAt: number, heartbeatTimer?: NodeJS.Timeout }>} */
     this.keyToConnection = new Map();
     /** @type {Map<string, Promise<void>>} */
     this.pendingOpens = new Map();
@@ -37,7 +37,7 @@ class StreamMultiplexer {
     const inFlight = this.pendingOpens.get(key);
     if (inFlight) {
       console.log(`[${this.name}] Awaiting pending upstream open for key=${key} ...`);
-      try { await inFlight; } catch (_) {}
+      try { await inFlight; } catch (e) { console.log(`[${this.name}] Pending open failed for key=${key}`, e && e.message); }
       const after = this.keyToConnection.get(key);
       if (after && after.upstream) {
         console.log(`[${this.name}] Reusing just-opened upstream for key=${key}.`);
@@ -51,21 +51,19 @@ class StreamMultiplexer {
 
     const { path, paperTrading = false, query } = this.buildRequest(userId, deps) || {};
     if (!path) {
-      const err = new Error('Invalid upstream request');
-      err.status = 400; err.response = { error: 'Missing path for upstream request' };
+      const err = { __error: true, status: 400, response: { error: 'Missing path for upstream request' }, message: 'Invalid upstream request' };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
-      throw err;
+      return err;
     }
     let accessToken;
     try {
       accessToken = await getUserAccessToken(userId);
     } catch (tokenErr) {
-      const err = new Error('Failed to acquire access token');
-      err.status = 401; err.response = { error: 'Unauthorized', details: tokenErr && tokenErr.message };
+      const err = { __error: true, status: 401, response: { error: 'Unauthorized', details: tokenErr && tokenErr.message }, message: 'Failed to acquire access token' };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
-      throw err;
+      return err;
     }
     const url = buildUrl(!!paperTrading, path, query);
 
@@ -81,11 +79,10 @@ class StreamMultiplexer {
         } catch (_) {}
       }
     } catch (networkErr) {
-      const err = new Error('Upstream fetch failed');
-      err.status = 502; err.response = { error: 'Bad Gateway', details: networkErr && networkErr.message };
+      const err = { __error: true, status: 502, response: { error: 'Bad Gateway', details: networkErr && networkErr.message }, message: 'Upstream fetch failed' };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
-      throw err;
+      return err;
     }
 
     if (!upstream || !upstream.ok) {
@@ -95,19 +92,31 @@ class StreamMultiplexer {
       // Provide more helpful messages by status
       const status = upstream && typeof upstream.status === 'number' ? upstream.status : 500;
       const friendly = status === 403 ? 'Forbidden' : (status === 429 ? 'Rate limited' : (status === 404 ? 'Not found' : 'Upstream not OK'));
-      const err = new Error(friendly);
-      err.status = status; err.response = data && Object.keys(data).length ? data : { error: friendly };
+      const err = { __error: true, status: status, response: (data && Object.keys(data).length ? data : { error: friendly }), message: friendly };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
-      throw err;
+      return err;
     }
 
+    // If user's exclusive key changed while we were opening, abandon this upstream to avoid duplicate upstreams
+    try {
+      const lastKey = this.userToLastKey.get(userId);
+      if (lastKey && lastKey !== key) {
+        console.log(`[${this.name}] Abandoning stale upstream for key=${key} (lastKey changed to ${lastKey})`);
+        try { upstream.body && upstream.body.destroy && upstream.body.destroy(); } catch (_) {}
+        try { resolveLock(); } catch (_) {}
+        this.pendingOpens.delete(key);
+        return { __error: true, status: 409, response: { error: 'Stale upstream (key changed during open)' }, message: 'Stale upstream' };
+      }
+    } catch (_) {}
+
     const readable = upstream.body;
-    const state = entry || { key, subscribers: new Set(), upstream: null, readable: null };
-    state.upstream = upstream; state.readable = readable;
+    const state = entry || { key, subscribers: new Set(), upstream: null, readable: null, lastActivityAt: Date.now(), heartbeatTimer: undefined };
+    state.upstream = upstream; state.readable = readable; state.lastActivityAt = Date.now();
     this.keyToConnection.set(key, state);
 
     readable.on('data', (chunk) => {
+      state.lastActivityAt = Date.now();
       for (const res of state.subscribers) { try { res.write(chunk); } catch (_) {} }
     });
 
@@ -115,6 +124,7 @@ class StreamMultiplexer {
       console.log(`[${this.name}] Upstream closing for key=${key}. Closing ${state.subscribers.size} subscriber(s).`);
       for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
       state.subscribers.clear();
+      try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
       this.keyToConnection.delete(key);
       console.log(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
     };
@@ -135,20 +145,16 @@ class StreamMultiplexer {
     }
     const lock = this.pendingOpens.get(key);
     try { await lock; } catch (_) {}
-    try {
-      state = await this.ensureUpstream(userId, deps);
-    } catch (err) {
-      const status = err && err.status ? err.status : 500;
-      const payload = err && err.response ? err.response : { error: err && err.message ? err.message : 'Failed to start upstream' };
-      try {
-        res.setHeader('Content-Type', 'application/json');
-      } catch (_) {}
-      try {
-        return res.status(status).json(payload);
-      } catch (_) {
-        try { res.end(); } catch (_) {}
-        return;
-      }
+    state = await this.ensureUpstream(userId, deps);
+    if (!state) {
+      try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
+      try { return res.status(500).json({ error: 'Failed to establish upstream' }); } catch (_) { try { res.end(); } catch (_) {} return; }
+    }
+    if (state && state.__error) {
+      const status = state.status || 500;
+      const payload = state.response || { error: state.message || 'Failed to start upstream' };
+      try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
+      try { return res.status(status).json(payload); } catch (_) { try { res.end(); } catch (_) {} return; }
     }
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');

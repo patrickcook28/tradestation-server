@@ -109,7 +109,7 @@ const tradestationRequest = async (userId, {
   };
 
   // Optional: simple request logging for future enhancement
-  try { logger && logger.tradestation && logger.tradestation(url); } catch (_) {}
+  // try { logger && logger.tradestation && logger.tradestation(url); } catch (_) {}
 
   let response = await fetch(url, options);
   let text = await response.text();

@@ -499,7 +499,7 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
       '5min': { unit: 'Minute', interval: 5, barsback: 1000 },
       '15min': { unit: 'Minute', interval: 15, barsback: 1000 },
       '30min': { unit: 'Minute', interval: 30, barsback: 1000 },
-      '1hour': { unit: 'Minute', interval: 60, barsback: 5000 },
+      '1hour': { unit: 'Minute', interval: 60, barsback: 1000 },
       '4hour': { unit: 'Minute', interval: 240, barsback: 1000 },
       'daily': { unit: 'Daily', interval: 1, barsback: 500 }
     };
@@ -520,8 +520,7 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
       barsback: config.barsback.toString()
     });
     
-    const fullUrl = `${barsUrl}?${params}`;
-    logger.tradestation(fullUrl);
+    const fullUrl = `${barsUrl}?${params}`
     
     const response = await fetch(fullUrl, {
       method: 'GET',
