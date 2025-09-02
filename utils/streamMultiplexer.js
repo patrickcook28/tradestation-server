@@ -116,20 +116,31 @@ class StreamMultiplexer {
     this.keyToConnection.set(key, state);
 
     readable.on('data', (chunk) => {
-      state.lastActivityAt = Date.now();
-      for (const res of state.subscribers) { try { res.write(chunk); } catch (_) {} }
+      try {
+        state.lastActivityAt = Date.now();
+        for (const res of state.subscribers) { try { res.write(chunk); } catch (_) {} }
+      } catch (error) {
+        console.error(`[${this.name}] Error handling data for key=${key}:`, error);
+      }
     });
 
-    const cleanup = () => {
-      console.log(`[${this.name}] Upstream closing for key=${key}. Closing ${state.subscribers.size} subscriber(s).`);
-      for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
-      state.subscribers.clear();
-      try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
-      this.keyToConnection.delete(key);
-      console.log(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
+    const cleanup = (error) => {
+      try {
+        if (error) {
+          console.error(`[${this.name}] Upstream error for key=${key}:`, error);
+        }
+        console.log(`[${this.name}] Upstream closing for key=${key}. Closing ${state.subscribers.size} subscriber(s).`);
+        for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
+        state.subscribers.clear();
+        try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
+        this.keyToConnection.delete(key);
+        console.log(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
+      } catch (cleanupError) {
+        console.error(`[${this.name}] Error during cleanup for key=${key}:`, cleanupError);
+      }
     };
-    readable.on('end', cleanup);
-    readable.on('error', cleanup);
+    readable.on('end', () => cleanup());
+    readable.on('error', (error) => cleanup(error));
 
     try { resolveLock(); } catch (_) {}
     this.pendingOpens.delete(key);
@@ -139,22 +150,28 @@ class StreamMultiplexer {
   async addSubscriber(userId, deps, res) {
     const key = this.makeKey(userId, deps);
     let state;
-    // Prevent concurrent subscriber mutations for the same key
-    if (!this.pendingOpens.has(key)) {
-      this.pendingOpens.set(key, Promise.resolve());
-    }
-    const lock = this.pendingOpens.get(key);
-    try { await lock; } catch (_) {}
-    state = await this.ensureUpstream(userId, deps);
-    if (!state) {
+    try {
+      // Prevent concurrent subscriber mutations for the same key
+      if (!this.pendingOpens.has(key)) {
+        this.pendingOpens.set(key, Promise.resolve());
+      }
+      const lock = this.pendingOpens.get(key);
+      try { await lock; } catch (_) {}
+      state = await this.ensureUpstream(userId, deps);
+      if (!state) {
+        try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
+        try { return res.status(500).json({ error: 'Failed to establish upstream' }); } catch (_) { try { res.end(); } catch (_) {} return; }
+      }
+      if (state && state.__error) {
+        const status = state.status || 500;
+        const payload = state.response || { error: state.message || 'Failed to start upstream' };
+        try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
+        try { return res.status(status).json(payload); } catch (_) { try { res.end(); } catch (_) {} return; }
+      }
+    } catch (error) {
+      console.error(`[${this.name}] Error in addSubscriber for key=${key}:`, error);
       try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
-      try { return res.status(500).json({ error: 'Failed to establish upstream' }); } catch (_) { try { res.end(); } catch (_) {} return; }
-    }
-    if (state && state.__error) {
-      const status = state.status || 500;
-      const payload = state.response || { error: state.message || 'Failed to start upstream' };
-      try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
-      try { return res.status(status).json(payload); } catch (_) { try { res.end(); } catch (_) {} return; }
+      try { return res.status(500).json({ error: 'Internal server error', details: error.message }); } catch (_) { try { res.end(); } catch (_) {} return; }
     }
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
@@ -186,13 +203,19 @@ class StreamMultiplexer {
    * If the computed key changes for this user, close the old upstream first.
    */
   async addExclusiveSubscriber(userId, deps, res) {
-    const nextKey = this.makeKey(userId, deps);
-    const prevKey = this.userToLastKey.get(userId);
-    if (prevKey && prevKey !== nextKey) {
-      try { this.closeKey(prevKey); } catch (_) {}
+    try {
+      const nextKey = this.makeKey(userId, deps);
+      const prevKey = this.userToLastKey.get(userId);
+      if (prevKey && prevKey !== nextKey) {
+        try { this.closeKey(prevKey); } catch (_) {}
+      }
+      this.userToLastKey.set(userId, nextKey);
+      return await this.addSubscriber(userId, deps, res);
+    } catch (error) {
+      console.error(`[${this.name}] Error in addExclusiveSubscriber for userId=${userId}:`, error);
+      try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
+      try { return res.status(500).json({ error: 'Internal server error', details: error.message }); } catch (_) { try { res.end(); } catch (_) {} return; }
     }
-    this.userToLastKey.set(userId, nextKey);
-    return this.addSubscriber(userId, deps, res);
   }
 
   /**

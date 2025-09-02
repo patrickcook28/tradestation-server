@@ -16,6 +16,25 @@ const { authenticateToken } = require('./routes/auth');
 
 dotenv.config({ path: './.env'});
 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Promise Rejection at:', promise, 'reason:', reason);
+  // Log the error but don't crash the server
+  if (logger && logger.error) {
+    logger.error('Unhandled Promise Rejection:', { reason, promise: promise.toString() });
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  if (logger && logger.error) {
+    logger.error('Uncaught Exception:', error);
+  }
+  // For uncaught exceptions, we should exit gracefully
+  process.exit(1);
+});
+
 const pusher = new Pusher({
   appId: "1800665",
   key: "ba14eb35edcc14c65a59",
