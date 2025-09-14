@@ -366,12 +366,13 @@ const getTickerDetails = async (req, res) => {
 // Proxy: Market data - bar charts
 const getBarCharts = async (req, res) => {
   const { ticker } = req.params;
-  const { interval, unit, barsback, sessiontemplate } = req.query;
+  const { interval, unit, barsback, sessiontemplate, lastdate, firstdate } = req.query;
   return respondWithTradestation(req, res, {
     method: 'GET',
     path: `/marketdata/barcharts/${ticker}`,
     paperTrading: false,
-    query: { interval, unit, barsback, sessiontemplate },
+    // Support both basic paging (barsback) and time-bounded queries (lastdate/firstdate)
+    query: { interval, unit, barsback, sessiontemplate, lastdate, firstdate },
   });
 };
 
@@ -492,6 +493,19 @@ const streamBars = async (req, res) => {
   });
 };
 
+// Stream: Market depth aggregates (backend-proxied)
+const marketAggregatesStreamManager = require('../utils/marketAggregatesStreamManager');
+const streamMarketAggregates = async (req, res) => {
+  const { ticker } = req.params;
+  if (!ticker) {
+    return res.status(400).json({ error: 'ticker is required' });
+  }
+  return marketAggregatesStreamManager.addSubscriber(String(req.user.id), { ticker }, res).catch(err => {
+    const status = err.status || 500;
+    return res.status(status).json(err.response || { error: err.message || 'Failed to start market aggregates stream' });
+  });
+};
+
 module.exports = {
   handleOAuthCallback,
   refreshAccessToken,
@@ -515,4 +529,5 @@ module.exports = {
   streamPositions,
   streamOrders,
   streamBars,
+  streamMarketAggregates,
 };

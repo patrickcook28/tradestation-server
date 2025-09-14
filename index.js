@@ -179,6 +179,8 @@ app.get('/tradestation/stream/quotes', authenticateToken, routes.tradeStationRou
 app.get('/tradestation/stream/accounts/:accountId/positions', authenticateToken, routes.tradeStationRoutes.streamPositions);
 app.get('/tradestation/stream/accounts/:accountId/orders', authenticateToken, routes.tradeStationRoutes.streamOrders);
 app.get('/tradestation/marketdata/stream/barcharts/:ticker', authenticateToken, routes.tradeStationRoutes.streamBars);
+// Streaming market data - market depth aggregates
+app.get('/tradestation/marketdata/stream/marketdepth/aggregates/:ticker', authenticateToken, routes.tradeStationRoutes.streamMarketAggregates);
 
 // Add referral routes
 app.use('/referral', routes.referralRoutes);

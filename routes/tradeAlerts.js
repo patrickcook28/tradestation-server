@@ -496,12 +496,12 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
     
     // Map timeframe to TradeStation API unit and barsback
     const timeframeConfig = {
-      '5min': { unit: 'Minute', interval: 5, barsback: 1000 },
-      '15min': { unit: 'Minute', interval: 15, barsback: 1000 },
-      '30min': { unit: 'Minute', interval: 30, barsback: 1000 },
-      '1hour': { unit: 'Minute', interval: 60, barsback: 1000 },
-      '4hour': { unit: 'Minute', interval: 240, barsback: 1000 },
-      'daily': { unit: 'Daily', interval: 1, barsback: 500 }
+      '5min': { unit: 'Minute', interval: 5, barsback: 500 },
+      '15min': { unit: 'Minute', interval: 15, barsback: 500 },
+      '30min': { unit: 'Minute', interval: 30, barsback: 500 },
+      '1hour': { unit: 'Minute', interval: 60, barsback: 500 },
+      '4hour': { unit: 'Minute', interval: 240, barsback: 300 },
+      'daily': { unit: 'Daily', interval: 1, barsback: 200 }
     };
     
     const config = timeframeConfig[timeframe];
