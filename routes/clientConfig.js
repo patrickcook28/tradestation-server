@@ -39,6 +39,7 @@ const getInitialConfig = async (req, res) => {
         await client.query('COMMIT');
 
         // Construct the full config object
+        const { decryptToken } = require('../utils/secureCredentials');
         const config = {
             user: {
                 id: userData.id,
@@ -50,8 +51,8 @@ const getInitialConfig = async (req, res) => {
                 showTooltips: userData.showTooltips
             },
             credentials: {
-                access_token: userData.access_token,
-                refresh_token: userData.refresh_token,
+                access_token: userData.access_token ? decryptToken(userData.access_token) : null,
+                refresh_token: userData.refresh_token ? decryptToken(userData.refresh_token) : null,
                 expires_in: userData.expires_at,
             },
             settings: {

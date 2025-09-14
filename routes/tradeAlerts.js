@@ -482,7 +482,13 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
       logger.error(`No API credentials found for user ${userId}`);
       return null;
     }
-    let credentials = credentialsResult.rows[0];
+    const { decryptToken } = require('../utils/secureCredentials');
+    let row = credentialsResult.rows[0];
+    let credentials = {
+      access_token: decryptToken(row.access_token),
+      refresh_token: decryptToken(row.refresh_token),
+      expires_at: row.expires_at
+    };
 
     // Check if access token is expired and refresh if needed
     if (credentials.expires_at && new Date(credentials.expires_at) < new Date()) {
@@ -491,7 +497,12 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
       await refreshAccessTokenForUser(userId);
       // Re-fetch credentials after refresh
       credentialsResult = await pool.query(credentialsQuery, [userId]);
-      credentials = credentialsResult.rows[0];
+      row = credentialsResult.rows[0];
+      credentials = {
+        access_token: decryptToken(row.access_token),
+        refresh_token: decryptToken(row.refresh_token),
+        expires_at: row.expires_at
+      };
     }
     
     // Map timeframe to TradeStation API unit and barsback

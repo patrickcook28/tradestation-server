@@ -363,7 +363,13 @@ class RealtimeAlertChecker {
         return null;
       }
       
-      const credentials = credentialsResult.rows[0];
+      const { decryptToken } = require('../utils/secureCredentials');
+      const row = credentialsResult.rows[0];
+      const credentials = {
+        access_token: decryptToken(row.access_token),
+        refresh_token: decryptToken(row.refresh_token),
+        expires_at: row.expires_at
+      };
       
       // Fetch current quote from TradeStation API
       const quoteUrl = `https://api.tradestation.com/v3/marketdata/quotes/${ticker}`;

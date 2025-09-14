@@ -18,7 +18,7 @@ const handleOAuthCallback = async (req, res) => {
 
   // Verify JWT token
   try {
-    const user = jwt.verify(token, process.env.JWT_SECRET);
+    const user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     req.user = user;
   } catch (err) {
     return res.status(403).json({ error: 'Invalid or expired token' });
@@ -54,21 +54,10 @@ const handleOAuthCallback = async (req, res) => {
         return res.status(500).json({ error: 'Invalid response from TradeStation' });
       }
 
-      // Save credentials to database
+      // Save credentials to database (encrypted)
       try {
-        const result = await pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id]);
-        
-        if (result.rows.length > 0) {
-          await pool.query(
-            'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4',
-            [access_token, refresh_token, expires_at, req.user.id]
-          );
-        } else {
-          await pool.query(
-            'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)',
-            [req.user.id, access_token, refresh_token, expires_at]
-          );
-        }
+        const { setUserCredentials } = require('../utils/secureCredentials');
+        await setUserCredentials(req.user.id, { access_token, refresh_token, expires_at });
 
         
         const redirectUrl = `${process.env.FRONTEND_URL}/trade`;
@@ -98,7 +87,8 @@ const refreshAccessToken = async (req, res) => {
     if(error){
       return res.status(400).json({ error: 'DB Connection Failed' })
     } else if( result.rows.length > 0 ) {
-      const oauthCredentials = result.rows[0]
+      const { getUserCredentials, updateAccessToken } = require('../utils/secureCredentials');
+      const oauthCredentials = await getUserCredentials(req.user.id);
       // Use the refresh token to request a new access token
       const token_url = 'https://signin.tradestation.com/oauth/token';
       const data = {
@@ -122,14 +112,8 @@ const refreshAccessToken = async (req, res) => {
           const access_token = json_response['access_token'];
           const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
 
-          // Update the access token and expiration time in the database
-          oauthCredentials.access_token = access_token;
-          oauthCredentials.expires_at = expires_at;
-
-          // SAVE TO DB
-          const query = 'UPDATE api_credentials SET access_token = $1, expires_at = $2 WHERE user_id = $3';
-          const values = [access_token, expires_at, req.user.id];
-          await pool.query(query, values);
+          // Update the access token and expiration time in the database (encrypted)
+          await updateAccessToken(req.user.id, access_token, expires_at);
 
           res.json(oauthCredentials);
         } else {
@@ -152,8 +136,13 @@ const getStoredCredentials = async (req, res) => {
       if(error){
         return res.status(400).json({ error: 'DB Connection Failed' })
       } else if( result.rows.length > 0 ) {
-        const credentials = result.rows[0];
-        
+        const { decryptToken } = require('../utils/secureCredentials');
+        const row = result.rows[0];
+        const credentials = {
+          access_token: decryptToken(row.access_token),
+          refresh_token: decryptToken(row.refresh_token),
+          expires_at: row.expires_at
+        };
         res.json({
           access_token: credentials.access_token,
           refresh_token: credentials.refresh_token,
@@ -433,6 +422,8 @@ const createOrderGroup = async (req, res) => {
 // Stream: Market data - quotes (proxy streaming response to client)
 const { streamTradestation } = require('../utils/tradestationProxy');
 const quoteStreamManager = require('../utils/quoteStreamManager');
+const { captureException, captureMessage } = require('../utils/errorReporting');
+
 const streamQuotes = async (req, res) => {
   const { symbols } = req.query;
   if (!symbols || String(symbols).trim().length === 0) {
@@ -445,6 +436,7 @@ const streamQuotes = async (req, res) => {
   const joined = unique.join(',');
   // Ensure single upstream per user; broadcast to this client
   return quoteStreamManager.addSubscriber(String(req.user.id), joined, res).catch(err => {
+    try { captureException(err, { route: 'streamQuotes', symbols: joined }); } catch (_) {}
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start quote stream' });
   });
@@ -459,6 +451,7 @@ const streamPositions = async (req, res) => {
     return res.status(400).json({ error: 'accountId is required' });
   }
   return positionsStreamManager.addSubscriber(String(req.user.id), { accountId, paperTrading }, res).catch(err => {
+    try { captureException(err, { route: 'streamPositions', accountId, paperTrading }); } catch (_) {}
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start positions stream' });
   });
@@ -473,6 +466,7 @@ const streamOrders = async (req, res) => {
     return res.status(400).json({ error: 'accountId is required' });
   }
   return ordersStreamManager.addSubscriber(String(req.user.id), { accountId, paperTrading }, res).catch(err => {
+    try { captureException(err, { route: 'streamOrders', accountId, paperTrading }); } catch (_) {}
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start orders stream' });
   });
@@ -488,6 +482,7 @@ const streamBars = async (req, res) => {
   }
   const params = { ticker, interval, unit, barsback, sessiontemplate };
   return barsStreamManager.addSubscriber(String(req.user.id), params, res).catch(err => {
+    try { captureException(err, { route: 'streamBars', ...params }); } catch (_) {}
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start bars stream' });
   });
@@ -501,6 +496,7 @@ const streamMarketAggregates = async (req, res) => {
     return res.status(400).json({ error: 'ticker is required' });
   }
   return marketAggregatesStreamManager.addSubscriber(String(req.user.id), { ticker }, res).catch(err => {
+    try { captureException(err, { route: 'streamMarketAggregates', ticker }); } catch (_) {}
     const status = err.status || 500;
     return res.status(status).json(err.response || { error: err.message || 'Failed to start market aggregates stream' });
   });

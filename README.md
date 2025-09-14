@@ -120,3 +120,57 @@ The system calculates standard deviation bands based on:
 - **Calculation Method**: Candle body sizes (|open - close|)
 - **Bands**: ±1, ±1.5, and ±2 standard deviations from current price
 - **Caching**: Results are cached in the database and updated periodically
+
+# Password Reset and Email Setup
+
+## Environment Variables
+
+Add the following to your `.env` in `tradestation-server/`:
+
+```
+# App
+APP_BASE_URL=http://localhost:3002
+RESET_TOKEN_TTL_MINUTES=15
+PASSWORD_RESET_RATE_LIMIT_PER_HOUR=5
+
+# JWT (already present)
+# JWT_SECRET=...
+
+# Zoho SMTP (update with your Zoho info)
+ZOHO_SMTP_HOST=smtp.zoho.com
+ZOHO_SMTP_PORT=465
+ZOHO_SMTP_SECURE=true
+ZOHO_SMTP_USER=your-zoho-email@example.com
+ZOHO_SMTP_PASS=your-zoho-app-password
+
+# From address for emails
+EMAIL_FROM=support@tradecraftapp.com
+```
+
+Notes:
+- Use a Zoho App Password for `ZOHO_SMTP_PASS`.
+- Keep `APP_BASE_URL` pointing to your frontend origin. The reset link uses `${APP_BASE_URL}/reset-password?token=...`.
+- TTL is set to 15 minutes by default.
+
+## Database Migration
+
+Run the migration to create `password_resets`:
+
+```
+npm run migrate
+```
+
+## Endpoints
+
+- `POST /auth/request_password_reset` `{ email }` → Always returns `{ success: true }`.
+- `POST /auth/reset_password` `{ token, new_password }` → On success returns `{ success: true }`.
+
+## Email Branding
+
+- Emails are sent from `support@tradecraftapp.com`.
+- The reset email uses a simple dark theme and pulls the logo from `${APP_BASE_URL}/images/tradestation-logo.png`.
+
+## Frontend Routes
+
+- `/forgot-password` → request reset link
+- `/reset-password?token=...` → set new password

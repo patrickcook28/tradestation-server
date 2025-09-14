@@ -1,10 +1,18 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
+const crypto = require('crypto');
+const { createTransport, buildResetEmail } = require('../config/email');
 const logger = require("../config/logging");
 
 const register = async (req, res) => {
     const { email, password, password_confirm, referral_code } = req.body;
+
+    // Enforce moderate password complexity at registration
+    const complexity = validatePasswordComplexity(password);
+    if (!complexity.valid) {
+        return res.status(400).json({ error: complexity.message });
+    }
 
     pool.query('SELECT email FROM users WHERE email = $1', [email], async (error, result) => {
         if(error){
@@ -55,7 +63,7 @@ const register = async (req, res) => {
         pool.query(
             'INSERT INTO users (email, password, beta_user, referral_code) VALUES ($1, $2, $3, $4) RETURNING *',
             [email, hashedPassword, beta_user, final_referral_code], 
-            (error, result) => {
+            async (error, result) => {
                 if(error) {
                     console.error('Database error during user creation:', error);
                     return res.status(400).json({ error: 'Failed to create new user' })
@@ -72,6 +80,8 @@ const register = async (req, res) => {
                     const newUser = result.rows[0];
                     console.log('New user data:', newUser);
                     
+                    // Save current password to history
+                    try { await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [newUser.id, hashedPassword]); } catch (_) {}
                     return res.json({ 
                         success: true, 
                         beta_user: beta_user,
@@ -94,6 +104,14 @@ const register = async (req, res) => {
 const login = async (req, res) => {
     const { email, password } = req.body;
 
+    // Enforce the same complexity rule even on login to nudge updates (but do not block legacy)
+    // Only warn if clearly too weak to avoid locking out existing users
+    const complexity = validatePasswordComplexity(password);
+    if (!complexity.valid && complexity.severity === 'weak') {
+        // Proceed without blocking login
+        console.log('[Auth] Weak password used on login for', email);
+    }
+
     pool.query('SELECT * FROM users WHERE email = $1', [email], async (error, result) => {
         if(error){
             return res.status(400).json({ error: 'Failed to check if user exists' })
@@ -109,7 +127,7 @@ const login = async (req, res) => {
             return res.status(400).json({ error: 'Invalid credentials' })
         }
 
-        let token = jwt.sign({ id: user.id }, process.env.JWT_SECRET)
+        let token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { algorithm: 'HS256' })
         console.log('Login successful, returning user:', user);
         return res.json({
             token,
@@ -126,6 +144,139 @@ const login = async (req, res) => {
     })
 };
 
+// Helper: moderate complexity — min 10, upper, lower, digit, special; allow common patterns like Buzzandcash1996!
+function validatePasswordComplexity(password) {
+    if (typeof password !== 'string') {
+        return { valid: false, severity: 'invalid', message: 'Password is required' };
+    }
+    const minLen = 10;
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasDigit = /\d/.test(password);
+    const hasSpecial = /[^A-Za-z0-9]/.test(password);
+    if (password.length < minLen) return { valid: false, severity: 'block', message: 'Password must be at least 10 characters' };
+    if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) return { valid: false, severity: 'block', message: 'Password must include upper, lower, number, and symbol' };
+    return { valid: true };
+}
+
+// Request password reset
+const requestPasswordReset = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+        if (!email) return res.status(200).json({ success: true });
+
+        const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+        if (userResult.rows.length === 0) {
+            // Always respond the same
+            return res.status(200).json({ success: true });
+        }
+
+        const userId = userResult.rows[0].id;
+
+        // Optional: simple rate limit per user (max 3 per hour)
+        await pool.query(`DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NOT NULL`, [userId]);
+        const recent = await pool.query(`
+            SELECT count(*) FROM password_resets WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
+        `, [userId]);
+        if (Number(recent.rows[0].count) >= Number(process.env.PASSWORD_RESET_RATE_LIMIT_PER_HOUR || 5)) {
+            return res.status(200).json({ success: true });
+        }
+
+        // Invalidate any previous unused tokens for this user so only the latest works
+        await pool.query(
+          `UPDATE password_resets SET used_at = NOW(), updated_at = NOW(), invalidated_reason = 'superseded' 
+           WHERE user_id = $1 AND used_at IS NULL`, [userId]
+        );
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const ttlMinutes = Number(process.env.RESET_TOKEN_TTL_MINUTES || 15);
+        const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+        await pool.query(`
+            INSERT INTO password_resets (user_id, token_hash, expires_at, requested_ip)
+            VALUES ($1, $2, $3, $4)
+        `, [userId, tokenHash, expiresAt, clientIp]);
+
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+        const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+        try {
+            const transport = createTransport();
+            const mail = buildResetEmail({ to: email, resetUrl });
+            await transport.sendMail(mail);
+        } catch (err) {
+            console.error('Failed to send reset email:', err.message);
+        }
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('requestPasswordReset error:', error);
+        return res.status(200).json({ success: true });
+    }
+};
+
+// Reset password
+const resetPassword = async (req, res) => {
+    try {
+        const { token, new_password } = req.body;
+        if (!token || !new_password) return res.status(400).json({ error: 'Invalid request' });
+
+        const complexity = validatePasswordComplexity(new_password);
+        if (!complexity.valid) return res.status(400).json({ error: complexity.message });
+
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const pr = await pool.query(`
+            SELECT pr.*, u.id as uid FROM password_resets pr
+            JOIN users u ON u.id = pr.user_id
+            WHERE pr.token_hash = $1
+            ORDER BY pr.created_at DESC
+            LIMIT 1
+        `, [tokenHash]);
+
+        if (pr.rows.length === 0) return res.status(400).json({ error: 'Invalid or expired token' });
+        const row = pr.rows[0];
+        if (row.used_at) {
+            if (row.invalidated_reason === 'superseded') {
+                return res.status(400).json({ error: 'Token superseded by newer request' });
+            }
+            return res.status(400).json({ error: 'Token already used' });
+        }
+        if (new Date(row.expires_at).getTime() < Date.now()) return res.status(400).json({ error: 'Token expired' });
+
+        // Prevent reusing last N password hashes (e.g., 5)
+        const history = await pool.query('SELECT password_hash FROM password_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5', [row.uid]);
+        for (const h of history.rows) {
+            const reused = await bcrypt.compare(new_password, h.password_hash);
+            if (reused) {
+                return res.status(400).json({ error: 'You cannot reuse a recent password' });
+            }
+        }
+
+        const hashedPassword = await bcrypt.hash(new_password, 8);
+
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, row.uid]);
+        await pool.query('UPDATE password_resets SET used_at = NOW(), updated_at = NOW() WHERE id = $1', [row.id]);
+        // Invalidate other outstanding reset tokens for this user
+        await pool.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [row.uid]);
+        // Insert new hash into password history and prune to last 5
+        await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [row.uid, hashedPassword]);
+        await pool.query(`
+          DELETE FROM password_history
+          WHERE user_id = $1
+          AND id NOT IN (
+            SELECT id FROM password_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5
+          )
+        `, [row.uid]);
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('resetPassword error:', error);
+        return res.status(500).json({ error: 'Failed to reset password' });
+    }
+};
+
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -135,7 +286,7 @@ const authenticateToken = (req, res, next) => {
     return res.sendStatus(401); // if there isn't any token
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
     if (err) {
       logger.auth(req.method, req.path, 'Failed', null);
       return res.sendStatus(403);
@@ -451,5 +602,7 @@ module.exports = {
     getCostBasisData,
     updateCostBasisData,
     getMaintenanceMode,
-    updateMaintenanceMode
+    updateMaintenanceMode,
+    requestPasswordReset,
+    resetPassword
 };

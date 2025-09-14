@@ -1,6 +1,8 @@
 const fetch = require('node-fetch');
 const pool = require('../db');
+const { decryptToken } = require('./secureCredentials');
 const logger = require('../config/logging');
+const { captureException, captureMessage } = require('./errorReporting');
 
 const getTradeStationBaseUrl = (paperTrading) => {
   return paperTrading ? 'https://sim-api.tradestation.com/v3' : 'https://api.tradestation.com/v3';
@@ -29,7 +31,15 @@ const getUserAccessToken = async (userId) => {
     err.status = 404;
     throw err;
   }
-  return credResult.rows[0].access_token;
+  try {
+    return decryptToken(credResult.rows[0].access_token);
+  } catch (e) {
+    // Badly formatted encrypted token; purge creds to force reconnect
+    try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
+    const err = new Error('Unable to decrypt credentials, clearing credentials');
+    err.status = 401;
+    throw err;
+  }
 };
 
 // Single-flight refresh control: only one refresh runs at a time per user
@@ -47,7 +57,7 @@ const refreshAccessTokenSingleFlight = async (userId) => {
         err.status = 404;
         throw err;
       }
-      const refresh_token = result.rows[0].refresh_token;
+      const refresh_token = decryptToken(result.rows[0].refresh_token);
       const token_url = 'https://signin.tradestation.com/oauth/token';
       const data = {
         'grant_type': 'refresh_token',
@@ -63,14 +73,19 @@ const refreshAccessTokenSingleFlight = async (userId) => {
       if (!response.ok) {
         const text = await response.text();
         try { logger && logger.error && logger.error('Token refresh failed', response.status, text); } catch (_) {}
+        // Only purge credentials when TradeStation explicitly returns 401 (invalid/expired refresh token)
+        if (response.status === 401) {
+          try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
+        }
         const err = new Error('Attempt to refresh token failed due to Tradestation response');
-        err.status = 401;
+        err.status = response.status || 401;
         throw err;
       }
       const json_response = await response.json();
       const access_token = json_response['access_token'];
       const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
-      await pool.query('UPDATE api_credentials SET access_token = $1, expires_at = $2 WHERE user_id = $3', [access_token, expires_at, userId]);
+      const { updateAccessToken } = require('./secureCredentials');
+      await updateAccessToken(userId, access_token, expires_at);
       return { access_token, expires_at };
     } finally {
       inflightRefreshByUserId.delete(userId);
@@ -148,6 +163,7 @@ const respondWithTradestation = async (req, res, requestOptions) => {
   } catch (error) {
     // Centralized error logging/formatting
     try { logger && logger.error && logger.error('TradeStation proxy error:', error); } catch (_) { console.error('TradeStation proxy error:', error); }
+    try { captureException(error, { scope: 'respondWithTradestation', path: requestOptions && requestOptions.path }); } catch (_) {}
     const status = error.status || 500;
     const message = error.message || 'Internal server error';
     return res.status(status).json({ error: message });
@@ -178,7 +194,7 @@ module.exports = {
       if (credResult.rows.length === 0) {
         return res.status(404).json({ error: 'No API credentials found' });
       }
-      const accessToken = credResult.rows[0].access_token;
+      const accessToken = decryptToken(credResult.rows[0].access_token);
 
       // Build URL
       const url = buildUrl(paperTrading, path, query);
@@ -196,6 +212,7 @@ module.exports = {
         const text = await upstream.text();
         let data;
         try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+        try { captureMessage('Upstream TradeStation non-OK in stream', { path, status: upstream.status, data: JSON.stringify(data).slice(0, 500) }); } catch (_) {}
         return res.status(upstream.status).json(data);
       }
 
@@ -219,7 +236,8 @@ module.exports = {
         try { res.end(); } catch (_) {}
       });
 
-      readable.on('error', () => {
+      readable.on('error', (err) => {
+        try { captureException(err || new Error('Readable stream error'), { scope: 'streamTradestation', path }); } catch (_) {}
         if (!res.headersSent) {
           try { res.status(502).json({ error: 'Upstream stream error' }); } catch (_) {}
         } else {
@@ -228,6 +246,7 @@ module.exports = {
       });
     } catch (error) {
       try { logger && logger.error && logger.error('TradeStation stream proxy error:', error); } catch (_) { console.error('TradeStation stream proxy error:', error); }
+      try { captureException(error, { scope: 'streamTradestation', path }); } catch (_) {}
       const status = error.status || 500;
       const message = error.message || 'Internal server error';
       return res.status(status).json({ error: message });

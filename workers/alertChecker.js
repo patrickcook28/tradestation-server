@@ -1,7 +1,7 @@
 const pool = require("../db");
-const fetch = require('node-fetch');
 const { calculateStdDevLevels } = require('../routes/tradeAlerts');
 const logger = require('../config/logging');
+const { tradestationRequest } = require('../utils/tradestationProxy');
 
 class AlertChecker {
   constructor() {
@@ -185,33 +185,17 @@ class AlertChecker {
 
   async getCurrentPrice(ticker, userId = 1) {
     try {
-      // Get API credentials for the specific user
-      const credentialsQuery = 'SELECT * FROM api_credentials WHERE user_id = $1 LIMIT 1';
-      const credentialsResult = await pool.query(credentialsQuery, [userId]);
-      
-      if (credentialsResult.rows.length === 0) {
-        logger.error(`No API credentials found for user ${userId}`);
-        return null;
-      }
-      
-      const credentials = credentialsResult.rows[0];
-      
-      // Fetch current quote from TradeStation API
-      const quoteUrl = `https://api.tradestation.com/v3/marketdata/quotes/${ticker}`;
-      const response = await fetch(quoteUrl, {
+      // Centralized TS request (handles tokens/refresh)
+      const result = await tradestationRequest(userId, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${credentials.access_token}`,
-          'Content-Type': 'application/json'
-        }
+        path: `/marketdata/quotes/${ticker}`,
+        paperTrading: false,
       });
-      
-      if (!response.ok) {
-        logger.error(`Failed to fetch quote for ${ticker}:`, response.status, response.statusText);
+      if (!result.ok) {
+        logger.error(`Failed to fetch quote for ${ticker}:`, result.status, result.data);
         return null;
       }
-      
-      const data = await response.json();
+      const data = result.data || {};
       const quote = data.Quotes && data.Quotes[0];
       
       if (!quote) {
