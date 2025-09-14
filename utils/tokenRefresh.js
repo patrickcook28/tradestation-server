@@ -40,7 +40,7 @@ async function refreshAccessTokenForUserLocked(userId) {
 
       if (status === 401) {
         console.log("PURGING CREDENTIALS FOR USER", userId);
-        try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
+        // try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
       }
       const err = new Error(`Attempt to refresh token failed: ${text || status}`);
       err.status = status;
