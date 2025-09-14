@@ -3,6 +3,7 @@ const pool = require('../db');
 const { decryptToken } = require('./secureCredentials');
 const logger = require('../config/logging');
 const { captureException, captureMessage } = require('./errorReporting');
+const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
 
 const getTradeStationBaseUrl = (paperTrading) => {
   return paperTrading ? 'https://sim-api.tradestation.com/v3' : 'https://api.tradestation.com/v3';
@@ -31,69 +32,10 @@ const getUserAccessToken = async (userId) => {
     err.status = 404;
     throw err;
   }
-  try {
-    return decryptToken(credResult.rows[0].access_token);
-  } catch (e) {
-    // Badly formatted encrypted token; purge creds to force reconnect
-    try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
-    const err = new Error('Unable to decrypt credentials, clearing credentials');
-    err.status = 401;
-    throw err;
-  }
+  return decryptToken(credResult.rows[0].access_token);
 };
 
-// Single-flight refresh control: only one refresh runs at a time per user
-const inflightRefreshByUserId = new Map();
-
-const refreshAccessTokenSingleFlight = async (userId) => {
-  if (inflightRefreshByUserId.has(userId)) {
-    return inflightRefreshByUserId.get(userId);
-  }
-  const promise = (async () => {
-    try {
-      const result = await pool.query('SELECT refresh_token FROM api_credentials WHERE user_id = $1', [userId]);
-      if (result.rows.length === 0) {
-        const err = new Error('User not found');
-        err.status = 404;
-        throw err;
-      }
-      const refresh_token = decryptToken(result.rows[0].refresh_token);
-      const token_url = 'https://signin.tradestation.com/oauth/token';
-      const data = {
-        'grant_type': 'refresh_token',
-        'client_id': process.env.TRADESTATION_CLIENT_ID,
-        'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
-        'refresh_token': refresh_token
-      };
-      const response = await fetch(token_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        try { logger && logger.error && logger.error('Token refresh failed', response.status, text); } catch (_) {}
-        // Only purge credentials when TradeStation explicitly returns 401 (invalid/expired refresh token)
-        if (response.status === 401) {
-          try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
-        }
-        const err = new Error('Attempt to refresh token failed due to Tradestation response');
-        err.status = response.status || 401;
-        throw err;
-      }
-      const json_response = await response.json();
-      const access_token = json_response['access_token'];
-      const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
-      const { updateAccessToken } = require('./secureCredentials');
-      await updateAccessToken(userId, access_token, expires_at);
-      return { access_token, expires_at };
-    } finally {
-      inflightRefreshByUserId.delete(userId);
-    }
-  })();
-  inflightRefreshByUserId.set(userId, promise);
-  return promise;
-};
+// Consolidated token refresh: use single implementation from utils/tokenRefresh
 
 // Generic TradeStation request by path/query/body with stored access token
 const tradestationRequest = async (userId, {
@@ -134,7 +76,7 @@ const tradestationRequest = async (userId, {
   // If unauthorized, perform single-flight refresh and retry once
   if (response.status === 401) {
     try {
-      const refreshed = await refreshAccessTokenSingleFlight(userId);
+      const refreshed = await refreshAccessTokenForUserLocked(userId);
       accessToken = refreshed.access_token;
       const retryHeaders = {
         ...fetchHeaders,

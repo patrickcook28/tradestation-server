@@ -37,8 +37,7 @@ async function refreshAccessTokenForUserLocked(userId) {
     if (!response.ok) {
       const status = response.status;
       const text = await response.text();
-      // If refresh token is invalid/expired, purge creds so hasTradeStationCredentials becomes false
-      console.log("PURGING CREDENTIALS FOR USER", userId, status, text);
+
       if (status === 401) {
         console.log("PURGING CREDENTIALS FOR USER", userId);
         try { await pool.query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
