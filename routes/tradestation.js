@@ -64,7 +64,7 @@ const handleOAuthCallback = async (req, res) => {
         console.log('Redirecting to:', redirectUrl);
         res.redirect(redirectUrl);
       } catch (dbError) {
-        res.status(500).json({ error: 'Failed to save credentials' });
+        res.status(500).json({ error: 'Failed to save credentials', dbError: dbError.message });
       }
     } else {
       const errorResponse = await response.json();
