@@ -3,6 +3,9 @@ const fetch = require('node-fetch');
 const pool = require("../db");
 const {json} = require("express");
 const { getCommonFuturesContracts, getContractSeries } = require('../utils/contractSymbols');
+const { getUserAccessToken } = require('../utils/tradestationProxy');
+const { getUserCredentials } = require('../utils/secureCredentials');
+const { refreshAccessTokenForUserLocked } = require('../utils/tokenRefresh');
 
 const handleOAuthCallback = async (req, res) => {
   const code = req.query.code;
@@ -83,81 +86,28 @@ const handleOAuthCallback = async (req, res) => {
 }
 
 const refreshAccessToken = async (req, res) => {
-  pool.query('SELECT * FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
-    if(error){
-      return res.status(400).json({ error: 'DB Connection Failed' })
-    } else if( result.rows.length > 0 ) {
-      const { getUserCredentials, updateAccessToken } = require('../utils/secureCredentials');
-      const oauthCredentials = await getUserCredentials(req.user.id);
-      // Use the refresh token to request a new access token
-      const token_url = 'https://signin.tradestation.com/oauth/token';
-      const data = {
-        'grant_type': 'refresh_token',
-        'client_id': process.env.TRADESTATION_CLIENT_ID,
-        'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
-        'refresh_token': oauthCredentials.refresh_token
-      };
-
-      try {
-        const response = await fetch(token_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(data)
-        });
-
-        if (response.ok) {
-          const json_response = await response.json();
-          const access_token = json_response['access_token'];
-          const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
-
-          // Update the access token and expiration time in the database (encrypted)
-          await updateAccessToken(req.user.id, access_token, expires_at);
-
-          res.json(oauthCredentials);
-        } else {
-          res.status(400).json({ 'error': 'Attempt to refresh token failed due to Tradestation response' });
-        }
-      } catch (error) {
-        console.error(error);
-        res.status(400).json({ 'error': 'could not refresh token' });
-      }
-    } else {
-      return res.status(400).json({ error: 'User not found' })
-    }
-  })
+  try {
+    const result = await refreshAccessTokenForUserLocked(req.user.id);
+    return res.json(result);
+  } catch (error) {
+    const status = error.status || 400;
+    return res.status(status).json({ error: error.message || 'could not refresh token' });
+  }
 }
 
 // Get stored API credentials for the authenticated user
 const getStoredCredentials = async (req, res) => {
   try {
-    pool.query('SELECT access_token, refresh_token, expires_at FROM api_credentials WHERE user_id = $1', [req.user.id], async (error, result) => {
-      if(error){
-        return res.status(400).json({ error: 'DB Connection Failed' })
-      } else if( result.rows.length > 0 ) {
-        const { decryptToken } = require('../utils/secureCredentials');
-        const row = result.rows[0];
-        const credentials = {
-          access_token: decryptToken(row.access_token),
-          refresh_token: decryptToken(row.refresh_token),
-          expires_at: row.expires_at
-        };
-        res.json({
-          access_token: credentials.access_token,
-          refresh_token: credentials.refresh_token,
-          expires_at: credentials.expires_at
-        });
-      } else {
-        res.status(404).json({ error: 'No credentials found' });
-      }
+    const creds = await getUserCredentials(req.user.id);
+    if (!creds) return res.status(404).json({ error: 'No credentials found' });
+    return res.json({
+      access_token: creds.access_token,
+      refresh_token: creds.refresh_token,
+      expires_at: creds.expires_at
     });
   } catch (error) {
     console.error('Error getting stored credentials:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to retrieve stored credentials' 
-    });
+    return res.status(500).json({ success: false, error: 'Failed to retrieve stored credentials' });
   }
 };
 

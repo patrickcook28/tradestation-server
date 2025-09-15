@@ -131,24 +131,38 @@ module.exports = {
         throw Object.assign(new Error('streamTradestation requires a path starting with "/"'), { status: 400 });
       }
 
-      // Retrieve user access token
-      const credResult = await pool.query('SELECT access_token FROM api_credentials WHERE user_id = $1', [req.user.id]);
-      if (credResult.rows.length === 0) {
-        return res.status(404).json({ error: 'No API credentials found' });
-      }
-      const accessToken = decryptToken(credResult.rows[0].access_token);
+      // Retrieve user access token via centralized helper
+      let accessToken = await getUserAccessToken(req.user.id);
 
       // Build URL
       const url = buildUrl(paperTrading, path, query);
 
       // Initiate upstream streaming request
-      const upstream = await fetch(url, {
+      let upstream = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           ...headers,
         },
       });
+
+      // If unauthorized, refresh once and retry
+      if (upstream.status === 401) {
+        try {
+          const refreshed = await refreshAccessTokenForUserLocked(req.user.id);
+          accessToken = refreshed.access_token;
+          upstream = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              ...headers,
+            },
+          });
+        } catch (err) {
+          try { captureException(err, { scope: 'streamTradestation-refresh', path }); } catch (_) {}
+          return res.status(401).json({ error: 'Unauthorized' });
+        }
+      }
 
       if (!upstream.ok) {
         const text = await upstream.text();

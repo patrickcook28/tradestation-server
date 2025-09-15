@@ -355,54 +355,25 @@ class RealtimeAlertChecker {
 
   async getCurrentPriceData(ticker, userId) {
     try {
-      // Get API credentials
-      const credentialsQuery = 'SELECT * FROM api_credentials WHERE user_id = $1 LIMIT 1';
-      const credentialsResult = await pool.query(credentialsQuery, [userId]);
-      
-      if (credentialsResult.rows.length === 0) {
-        return null;
-      }
-      
-      const { decryptToken } = require('../utils/secureCredentials');
-      const row = credentialsResult.rows[0];
-      const credentials = {
-        access_token: decryptToken(row.access_token),
-        refresh_token: decryptToken(row.refresh_token),
-        expires_at: row.expires_at
-      };
-      
-      // Fetch current quote from TradeStation API
-      const quoteUrl = `https://api.tradestation.com/v3/marketdata/quotes/${ticker}`;
-      const response = await fetch(quoteUrl, {
-        headers: {
-          'Authorization': `Bearer ${credentials.access_token}`
-        }
+      const { tradestationRequest } = require('../utils/tradestationProxy');
+      const result = await tradestationRequest(userId, {
+        method: 'GET',
+        path: `/marketdata/quotes/${ticker}`,
+        paperTrading: false
       });
-      
-      if (!response.ok) {
-        return null;
-      }
-      
-      const data = await response.json();
+      if (!result.ok) return null;
+      const data = result.data;
       const quote = data.Quotes?.[0];
-      
-      if (!quote) {
-        return null;
-      }
-      
-      // Try different possible field names for last price
+      if (!quote) return null;
       const lastPrice = quote.Last || quote.LastPrice || quote.Close || quote.Price;
       const highPrice = quote.High || quote.DayHigh || lastPrice;
       const lowPrice = quote.Low || quote.DayLow || lastPrice;
-      
-      // Return high, low, and close prices
       return {
         high: parseFloat(highPrice) || 0,
         low: parseFloat(lowPrice) || 0,
         close: parseFloat(lastPrice) || 0,
         lastPrice: parseFloat(lastPrice) || 0
       };
-      
     } catch (error) {
       console.error('Error getting current price data:', error);
       return null;

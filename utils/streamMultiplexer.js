@@ -91,10 +91,6 @@ class StreamMultiplexer {
       let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
       // Provide more helpful messages by status
       const status = upstream && typeof upstream.status === 'number' ? upstream.status : 500;
-      // If we are still unauthorized after a refresh attempt, purge stored credentials so UI can prompt reconnect
-      if (status === 401) {
-        try { await require('../db').query('DELETE FROM api_credentials WHERE user_id = $1', [userId]); } catch (_) {}
-      }
       const friendly = status === 403 ? 'Forbidden' : (status === 429 ? 'Rate limited' : (status === 404 ? 'Not found' : 'Upstream not OK'));
       const err = { __error: true, status: status, response: (data && Object.keys(data).length ? data : { error: friendly }), message: friendly };
       try { rejectLock(err); } catch (_) {}

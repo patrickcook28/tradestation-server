@@ -475,35 +475,7 @@ const runAlertChecker = async (req, res) => {
 // Helper function to calculate standard deviation levels
 const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) => {
   try {
-    // Get user credentials from api_credentials table
-    const credentialsQuery = 'SELECT * FROM api_credentials WHERE user_id = $1 LIMIT 1';
-    let credentialsResult = await pool.query(credentialsQuery, [userId]);
-    if (credentialsResult.rows.length === 0) {
-      logger.error(`No API credentials found for user ${userId}`);
-      return null;
-    }
-    const { decryptToken } = require('../utils/secureCredentials');
-    let row = credentialsResult.rows[0];
-    let credentials = {
-      access_token: decryptToken(row.access_token),
-      refresh_token: decryptToken(row.refresh_token),
-      expires_at: row.expires_at
-    };
-
-    // Check if access token is expired and refresh if needed
-    if (credentials.expires_at && new Date(credentials.expires_at) < new Date()) {
-      logger.error('Access token expired, refreshing...');
-      // Call the refresh logic before continuing
-      await refreshAccessTokenForUser(userId);
-      // Re-fetch credentials after refresh
-      credentialsResult = await pool.query(credentialsQuery, [userId]);
-      row = credentialsResult.rows[0];
-      credentials = {
-        access_token: decryptToken(row.access_token),
-        refresh_token: decryptToken(row.refresh_token),
-        expires_at: row.expires_at
-      };
-    }
+    const { tradestationRequest } = require('../utils/tradestationProxy');
     
     // Map timeframe to TradeStation API unit and barsback
     const timeframeConfig = {
@@ -522,33 +494,16 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
     }
     
     // Fetch market data from TradeStation API
-    const barsUrl = `https://api.tradestation.com/v3/marketdata/barcharts/${ticker}`;
-    
-    // Use barsback parameter with proper unit mapping
-    const params = new URLSearchParams({
-      unit: config.unit,
-      interval: config.interval.toString(),
-      barsback: config.barsback.toString()
-    });
-    
-    const fullUrl = `${barsUrl}?${params}`
-    
-    const response = await fetch(fullUrl, {
+    const result = await tradestationRequest(userId, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${credentials.access_token}`,
-        'Content-Type': 'application/json'
-      }
+      path: `/marketdata/barcharts/${ticker}`,
+      query: { unit: config.unit, interval: config.interval, barsback: config.barsback },
     });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.error('Failed to fetch market data from TradeStation:', response.status, response.statusText);
-      logger.error('Error response:', errorText);
+    if (!result.ok) {
+      logger.error('Failed to fetch market data from TradeStation:', result.status);
       return null;
     }
-    
-    const data = await response.json();
+    const data = result.data;
     const bars = data.Bars || [];
     
     if (bars.length < 20) {
@@ -624,26 +579,22 @@ const calculateStdDevLevels = async (ticker, timeframe = '1hour', userId = 1) =>
 // Debug endpoint to check API credentials
 const debugCredentials = async (req, res) => {
   try {
-    const credentialsQuery = 'SELECT user_id, access_token, refresh_token, expires_at FROM api_credentials WHERE user_id = $1 LIMIT 1';
-    const credentialsResult = await pool.query(credentialsQuery, [req.user.id]);
-    
-    if (credentialsResult.rows.length === 0) {
-      return res.json({ 
-        error: `No API credentials found for user_id ${req.user.id}`,
-        message: 'You need to authenticate with TradeStation first'
-      });
+    const { getUserAccessToken } = require('../utils/tradestationProxy');
+    let hasToken = false;
+    let tokenExpired = false;
+    let expiresAt = null;
+    try {
+      const token = await getUserAccessToken(req.user.id);
+      hasToken = !!token;
+    } catch (_) {
+      hasToken = false;
     }
-    
-    const credentials = credentialsResult.rows[0];
-    const hasToken = !!credentials.access_token;
-    const tokenExpired = credentials.expires_at ? new Date(credentials.expires_at) < new Date() : false;
-    
-    res.json({
-      hasCredentials: true,
+    // We avoid exposing expiry details directly; keep response simple
+    return res.json({
+      hasCredentials: hasToken,
       hasToken,
       tokenExpired,
-      expiresAt: credentials.expires_at,
-      message: hasToken && !tokenExpired ? 'Credentials look good' : 'Token missing or expired'
+      expiresAt
     });
   } catch (error) {
     console.error('Error checking credentials:', error);
