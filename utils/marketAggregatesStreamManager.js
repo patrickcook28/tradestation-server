@@ -4,8 +4,11 @@ const mux = new StreamMultiplexer({
   name: 'MarketAggregates',
   makeKey: (userId, { ticker }) => [userId, ticker].join('|'),
   buildRequest: (userId, { ticker }) => ({
-    path: `/marketdata/stream/marketdepth/aggregates/${ticker}`,
+    // Use Market Depth Quotes stream per TradeStation docs
+    // https://api.tradestation.com/docs/specification/#tag/MarketData/operation/StreamMarketDepthQuotes
+    path: `/marketdata/stream/marketdepth/quotes/${ticker}`,
     paperTrading: false,
+    query: { maxlevels: '50' },
   })
 });
 

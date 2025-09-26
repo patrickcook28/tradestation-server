@@ -108,6 +108,28 @@ router.put('/trade_journal_template', authenticateToken, async (req, res) => {
   }
 });
 
+// Update a trade journal by id
+router.put('/trade_journals/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { entry } = req.body || {};
+    if (!entry || typeof entry !== 'object') {
+      return res.status(400).json({ error: 'Invalid entry payload' });
+    }
+    const userId = req.user.id;
+    // Allow updating when the row belongs to the user OR is legacy (user_id IS NULL). Also claim legacy row.
+    const result = await pool.query(
+      'UPDATE trade_journal SET entry = $3::jsonb, user_id = COALESCE(user_id, $2) WHERE id = $1 AND (user_id = $2 OR user_id IS NULL) RETURNING id, user_id, entry',
+      [id, userId, JSON.stringify(entry)]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating trade journal:', error);
+    return res.status(500).json({ error: 'Failed to update trade journal' });
+  }
+});
+
 module.exports = router;
 
 
