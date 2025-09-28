@@ -38,8 +38,7 @@ const getInitialConfig = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // Construct the full config object
-        const { decryptToken } = require('../utils/secureCredentials');
+        // Construct the full config object (do not return decrypted TradeStation tokens to the client)
         const config = {
             user: {
                 id: userData.id,
@@ -48,13 +47,11 @@ const getInitialConfig = async (req, res) => {
                 beta_user: userData.beta_user,
                 referral_code: userData.referral_code,
                 tradeConfirmation: userData.tradeConfirmation,
-                showTooltips: userData.showTooltips
+                showTooltips: userData.showTooltips,
+                // Expose only a boolean for TS connection status; never return tokens
+                hasTradeStationCredentials: Boolean(userData.access_token)
             },
-            credentials: {
-                access_token: userData.access_token ? decryptToken(userData.access_token) : null,
-                refresh_token: userData.refresh_token ? decryptToken(userData.refresh_token) : null,
-                expires_in: userData.expires_at,
-            },
+            // No credentials object returned to the frontend
             settings: {
                 maxLossPerDay: userData.max_loss_per_day,
                 maxLossPerDayEnabled: userData.max_loss_per_day_enabled,

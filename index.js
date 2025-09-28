@@ -203,6 +203,10 @@ app.use('/', routes.watchlistsRouter);
 // Trade journals routes (all require auth within router)
 app.use('/', routes.tradeJournalsRouter);
 
+// Indicators proxy route (pass-through Alpha Vantage) and admin cache info
+app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
+app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));
+
 // Sentry error handler (v8 registers its own middleware)
 Sentry.setupExpressErrorHandler(app);
 

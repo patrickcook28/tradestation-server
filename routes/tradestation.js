@@ -95,14 +95,13 @@ const refreshAccessToken = async (req, res) => {
   }
 }
 
-// Get stored API credentials for the authenticated user
+// Get stored API credentials for the authenticated user (sanitized: no tokens returned)
 const getStoredCredentials = async (req, res) => {
   try {
     const creds = await getUserCredentials(req.user.id);
     if (!creds) return res.status(404).json({ error: 'No credentials found' });
     return res.json({
-      access_token: creds.access_token,
-      refresh_token: creds.refresh_token,
+      hasCredentials: true,
       expires_at: creds.expires_at
     });
   } catch (error) {
@@ -234,9 +233,14 @@ const refreshAccessTokenForUser = async (userId) => {
 };
 
 const { respondWithTradestation } = require('../utils/tradestationProxy');
+const { getMaintenanceStatus } = require('../utils/maintenance');
 
 // Proxy: Get accounts from TradeStation using stored access token (no refresh logic)
 const getAccounts = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   return respondWithTradestation(req, res, {
     method: 'GET',
@@ -247,6 +251,10 @@ const getAccounts = async (req, res) => {
 
 // Proxy: Get balances for a specific account
 const getBalances = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { accountId } = req.params;
   return respondWithTradestation(req, res, {
@@ -258,6 +266,10 @@ const getBalances = async (req, res) => {
 
 // Proxy: Get positions for a specific account
 const getPositions = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { accountId } = req.params;
   return respondWithTradestation(req, res, {
@@ -269,6 +281,10 @@ const getPositions = async (req, res) => {
 
 // Proxy: Get orders for a specific account
 const getOrders = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { accountId } = req.params;
   return respondWithTradestation(req, res, {
@@ -280,6 +296,10 @@ const getOrders = async (req, res) => {
 
 // Proxy: Get historical orders (supports since, pageSize, nextToken)
 const getHistoricalOrders = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { accountId } = req.params;
   const { since, pageSize, nextToken } = req.query;
@@ -293,6 +313,10 @@ const getHistoricalOrders = async (req, res) => {
 
 // Proxy: Market data - ticker details
 const getTickerDetails = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { ticker } = req.params;
   // Market data uses live base; ignore paperTrading
   return respondWithTradestation(req, res, {
@@ -304,6 +328,10 @@ const getTickerDetails = async (req, res) => {
 
 // Proxy: Market data - bar charts
 const getBarCharts = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { ticker } = req.params;
   const { interval, unit, barsback, sessiontemplate, lastdate, firstdate } = req.query;
   return respondWithTradestation(req, res, {
@@ -317,6 +345,10 @@ const getBarCharts = async (req, res) => {
 
 // Proxy: Order execution - create order
 const createOrder = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   return respondWithTradestation(req, res, {
     method: 'POST',
@@ -328,6 +360,10 @@ const createOrder = async (req, res) => {
 
 // Proxy: Order execution - get/update/delete a specific order
 const getOrder = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { orderId } = req.params;
   return respondWithTradestation(req, res, {
@@ -338,6 +374,10 @@ const getOrder = async (req, res) => {
 };
 
 const updateOrder = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { orderId } = req.params;
   return respondWithTradestation(req, res, {
@@ -349,6 +389,10 @@ const updateOrder = async (req, res) => {
 };
 
 const cancelOrder = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   const { orderId } = req.params;
   return respondWithTradestation(req, res, {
@@ -360,6 +404,10 @@ const cancelOrder = async (req, res) => {
 
 // Proxy: Order execution - create order group (brackets)
 const createOrderGroup = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   return respondWithTradestation(req, res, {
     method: 'POST',
@@ -375,6 +423,10 @@ const quoteStreamManager = require('../utils/quoteStreamManager');
 const { captureException, captureMessage } = require('../utils/errorReporting');
 
 const streamQuotes = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { symbols } = req.query;
   if (!symbols || String(symbols).trim().length === 0) {
     return res.status(400).json({ error: 'symbols query param is required' });
@@ -395,6 +447,10 @@ const streamQuotes = async (req, res) => {
 // Stream: Brokerage positions per account (backend-proxied)
 const positionsStreamManager = require('../utils/positionsStreamManager');
 const streamPositions = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { accountId } = req.params;
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   if (!accountId) {
@@ -410,6 +466,10 @@ const streamPositions = async (req, res) => {
 // Stream: Brokerage orders per account (backend-proxied)
 const ordersStreamManager = require('../utils/ordersStreamManager');
 const streamOrders = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { accountId } = req.params;
   const paperTrading = String(req.query.paperTrading).toLowerCase() === 'true';
   if (!accountId) {
@@ -425,6 +485,10 @@ const streamOrders = async (req, res) => {
 // Stream: Bars (market data barcharts)
 const barsStreamManager = require('../utils/barsStreamManager');
 const streamBars = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { ticker } = req.params;
   const { interval, unit, barsback, sessiontemplate } = req.query;
   if (!ticker || !interval || !unit) {
@@ -441,6 +505,10 @@ const streamBars = async (req, res) => {
 // Stream: Market depth aggregates (backend-proxied)
 const marketAggregatesStreamManager = require('../utils/marketAggregatesStreamManager');
 const streamMarketAggregates = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
   const { ticker } = req.params;
   if (!ticker) {
     return res.status(400).json({ error: 'ticker is required' });
