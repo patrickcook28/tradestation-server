@@ -197,6 +197,9 @@ app.get('/tradestation/marketdata/stream/marketdepth/aggregates/:ticker', authen
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
 
+// Contact routes
+app.use('/contact', authenticateToken, routes.contactRoutes);
+
 // Watchlists routes (all require auth within router)
 app.use('/', routes.watchlistsRouter);
 
