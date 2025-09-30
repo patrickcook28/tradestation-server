@@ -37,6 +37,33 @@ function getTtlMs(interval) {
 // Shared cache across users
 const indicatorCache = new TTLCache('alphaVantageIndicators');
 
+function normalizeIntervalForAV(val) {
+  if (!val) return val;
+  try {
+    const s = String(val).toLowerCase();
+    if (s === '1hour' || s === '60' || s === '60m' || s === '60min') return '60min';
+    if (s.endsWith('min')) return s;
+    if (s === '1min' || s === '5min' || s === '15min' || s === '30min') return s;
+    if (s === 'daily' || s === 'weekly' || s === 'monthly') return s;
+    // TradeStation-style values
+    if (s === 'minute') return '5min';
+    if (s === 'daily' || s === 'weekly' || s === 'monthly') return s;
+    // numeric minutes
+    const n = Number(s);
+    if (Number.isFinite(n)) {
+      const allowed = [1, 5, 15, 30, 60];
+      let pick = allowed[0];
+      let best = Infinity;
+      for (const a of allowed) {
+        const d = Math.abs(a - n);
+        if (d < best) { best = d; pick = a; }
+      }
+      return `${pick}min`;
+    }
+  } catch (_) {}
+  return val;
+}
+
 // Build normalized signature of query
 function buildSignature(qs) {
   const entries = Object.entries(qs)
@@ -72,6 +99,18 @@ async function getIndicator(req, res) {
     // Ensure required keys are present and set apikey
     outgoing['function'] = fn;
     outgoing['apikey'] = apiKey;
+    // Normalize interval if present or derive from TradeStation-style hints
+    if (outgoing.interval) {
+      outgoing.interval = normalizeIntervalForAV(outgoing.interval);
+    } else if (req.query && (req.query.unit || req.query.ts_unit || req.query.chart_unit)) {
+      const unit = String(req.query.unit || req.query.ts_unit || req.query.chart_unit).toLowerCase();
+      const n = Number(req.query.interval || req.query.ts_interval || req.query.barsize || req.query.chart_interval);
+      if (unit === 'minute') {
+        outgoing.interval = normalizeIntervalForAV(Number.isFinite(n) ? `${n}` : '5');
+      } else if (unit === 'daily' || unit === 'weekly' || unit === 'monthly') {
+        outgoing.interval = unit;
+      }
+    }
 
     const ttlMs = getTtlMs(outgoing.interval || 'daily');
     const signature = buildSignature(outgoing);
