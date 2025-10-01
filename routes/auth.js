@@ -129,6 +129,16 @@ const login = async (req, res) => {
 
         let token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { algorithm: 'HS256' })
         console.log('Login successful, returning user:', user);
+
+        // Get subscription status
+        const { getSubscriptionStatus } = require('../utils/subscriptionHelpers');
+        let subscriptionStatus = null;
+        try {
+            subscriptionStatus = await getSubscriptionStatus(user.id);
+        } catch (err) {
+            console.error('Error fetching subscription status in login:', err);
+        }
+
         return res.json({
             token,
             id: user.id,
@@ -139,7 +149,8 @@ const login = async (req, res) => {
             maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
-            referral_code: user.referral_code
+            referral_code: user.referral_code,
+            subscriptionStatus: subscriptionStatus
         })
     })
 };
@@ -316,6 +327,16 @@ const getUserSettings = async (req, res) => {
         }
 
         const user = result.rows[0];
+
+        // Get subscription status
+        const { getSubscriptionStatus } = require('../utils/subscriptionHelpers');
+        let subscriptionStatus = null;
+        try {
+            subscriptionStatus = await getSubscriptionStatus(userId);
+        } catch (err) {
+            logger.error('Error fetching subscription status in getUserSettings:', err);
+        }
+
         return res.json({
             maxLossPerDay: user.max_loss_per_day || 0,
             maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
@@ -328,7 +349,8 @@ const getUserSettings = async (req, res) => {
             referral_code: user.referral_code,
             hasTradeStationCredentials: user.has_tradestation_credentials === true,
             appSettings: user.app_settings || {},
-            accountDefaults: user.account_defaults || {}
+            accountDefaults: user.account_defaults || {},
+            subscriptionStatus: subscriptionStatus
         });
     } catch (error) {
         logger.error('Error getting user settings:', error);

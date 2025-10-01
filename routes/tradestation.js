@@ -7,6 +7,60 @@ const { getUserAccessToken } = require('../utils/tradestationProxy');
 const { getUserCredentials } = require('../utils/secureCredentials');
 const { refreshAccessTokenForUserLocked } = require('../utils/tokenRefresh');
 
+// Get historical orders from local database for performance analysis
+const getLocalHistoricalOrders = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { startDate, endDate, limit = 1000 } = req.query;
+
+    // Build query with optional date filtering
+    let query = `
+      SELECT order_data, order_id, parent_order_id, created_at
+      FROM "order" 
+      WHERE user_id = $1
+    `;
+    const params = [userId];
+    let paramIndex = 2;
+
+    if (startDate) {
+      query += ` AND created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex++;
+    }
+
+    if (endDate) {
+      query += ` AND created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex}`;
+    params.push(parseInt(limit));
+
+    const result = await pool.query(query, params);
+    
+    // Transform the data to match the expected format
+    const orders = result.rows.map(row => ({
+      ...row.order_data,
+      OrderID: row.order_id,
+      CreatedAt: row.created_at
+    }));
+
+    res.json({
+      success: true,
+      orders: orders,
+      count: orders.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching historical orders:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch historical orders'
+    });
+  }
+};
+
 const handleOAuthCallback = async (req, res) => {
   const code = req.query.code;
   const token = req.query.state;

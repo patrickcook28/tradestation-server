@@ -210,6 +210,13 @@ app.use('/', routes.tradeJournalsRouter);
 app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
 app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));
 
+// Billing routes (Stripe integration)
+const billingRoutes = require('./routes/billing');
+// Initialize Stripe with secret key
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+billingRoutes.initializeStripe(stripe);
+app.use('/billing', billingRoutes);
+
 // Sentry error handler (v8 registers its own middleware)
 Sentry.setupExpressErrorHandler(app);
 

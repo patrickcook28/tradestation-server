@@ -48,7 +48,6 @@ async function refreshAccessTokenForUserLocked(userId) {
     }
 
     const json = await response.json();
-    console.log("REFRESHED CREDENTIALS FOR USER", userId, json);
     const access_token = json['access_token'];
     const expires_at = new Date(Date.now() + 1200 * 1000).toISOString();
     await updateAccessToken(userId, access_token, expires_at);
