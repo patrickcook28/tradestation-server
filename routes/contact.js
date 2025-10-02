@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { createTransport, buildContactNotificationEmail, buildContactConfirmationEmail } = require('../config/email');
+const logger = require('../config/logging');
 
 // Contact form submission
 router.post('/', async (req, res) => {
@@ -23,6 +25,9 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Check if this is a beta access request
+    const isBetaRequest = subject.toLowerCase().includes('beta access');
+
     // Insert contact form submission into database
     const result = await pool.query(
       `INSERT INTO contact_submissions (email, subject, message, user_id, created_at, status)
@@ -33,8 +38,45 @@ router.post('/', async (req, res) => {
 
     console.log(`Contact form submission received from ${email}: ${subject}`);
 
-    // TODO: Send email notification to admin
-    // TODO: Send auto-reply to user
+    // Send emails (don't let email failures block the request)
+    const transport = createTransport();
+    
+    // Send notification to admin
+    try {
+      const adminMailOptions = buildContactNotificationEmail({
+        email,
+        subject,
+        message,
+        userId,
+        isBetaRequest
+      });
+      
+      await transport.sendMail(adminMailOptions);
+      logger.info(`Contact notification email sent for submission ${result.rows[0].id}`);
+    } catch (emailError) {
+      logger.error('Failed to send admin notification email:', emailError);
+      console.error('Admin email error:', emailError);
+    }
+
+    // Send confirmation to user
+    try {
+      const userMailOptions = buildContactConfirmationEmail({
+        to: email,
+        subject,
+        isBetaRequest
+      });
+      
+      console.log(`Attempting to send confirmation email to: ${email}`);
+      console.log('User mail options:', JSON.stringify({ from: userMailOptions.from, to: userMailOptions.to, subject: userMailOptions.subject }));
+      
+      await transport.sendMail(userMailOptions);
+      logger.info(`Confirmation email sent to user ${email} for submission ${result.rows[0].id}`);
+      console.log(`✅ Successfully sent confirmation email to ${email}`);
+    } catch (emailError) {
+      logger.error('Failed to send user confirmation email:', emailError);
+      console.error('❌ User email error:', emailError);
+      console.error('Error details:', emailError.message);
+    }
 
     res.json({ 
       success: true, 
