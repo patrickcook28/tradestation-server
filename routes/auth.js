@@ -315,6 +315,7 @@ const getUserSettings = async (req, res) => {
         
         const result = await pool.query(
             `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
+                    max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
                     trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
                     app_settings, account_defaults,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
@@ -340,8 +341,10 @@ const getUserSettings = async (req, res) => {
         return res.json({
             maxLossPerDay: user.max_loss_per_day || 0,
             maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
+            maxLossPerDayLockExpiresAt: user.max_loss_per_day_lock_expires_at,
             maxLossPerTrade: user.max_loss_per_trade || 0,
             maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            maxLossPerTradeLockExpiresAt: user.max_loss_per_trade_lock_expires_at,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
@@ -362,30 +365,34 @@ const getUserSettings = async (req, res) => {
 const updateUserSettings = async (req, res) => {
     try {
         const userId = req.user.id;
-        const { 
-            maxLossPerDay, 
-            maxLossPerDayEnabled, 
-            maxLossPerTrade, 
+        const {
+            maxLossPerDay,
+            maxLossPerDayEnabled,
+            maxLossPerDayLockExpiresAt,
+            maxLossPerTrade,
             maxLossPerTradeEnabled,
+            maxLossPerTradeLockExpiresAt,
             tradeConfirmation,
             showTooltips,
             appSettings, // JSON object of global user settings (e.g., showStdDevLines, showLiquidity, showOrders, sessionTemplate)
-            accountDefaults // JSON object keyed by accountId with risk/riskPercentage etc.
+            accountDefaults, // JSON object keyed by accountId with risk/riskPercentage etc.
         } = req.body;
 
         const result = await pool.query(
             `UPDATE users SET 
                 max_loss_per_day = COALESCE($1, max_loss_per_day),
                 max_loss_per_day_enabled = COALESCE($2, max_loss_per_day_enabled),
-                max_loss_per_trade = COALESCE($3, max_loss_per_trade),
-                max_loss_per_trade_enabled = COALESCE($4, max_loss_per_trade_enabled),
-                trade_confirmation = COALESCE($5, trade_confirmation),
-                show_tooltips = COALESCE($6, show_tooltips),
-                app_settings = COALESCE($7::jsonb, app_settings),
-                account_defaults = COALESCE($8::jsonb, account_defaults)
-            WHERE id = $9
-            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, trade_confirmation, show_tooltips, superuser, beta_user, referral_code, app_settings, account_defaults`,
-            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerTrade, maxLossPerTradeEnabled, tradeConfirmation, showTooltips, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
+                max_loss_per_day_lock_expires_at = COALESCE($3, max_loss_per_day_lock_expires_at),
+                max_loss_per_trade = COALESCE($4, max_loss_per_trade),
+                max_loss_per_trade_enabled = COALESCE($5, max_loss_per_trade_enabled),
+                max_loss_per_trade_lock_expires_at = COALESCE($6, max_loss_per_trade_lock_expires_at),
+                trade_confirmation = COALESCE($7, trade_confirmation),
+                show_tooltips = COALESCE($8, show_tooltips),
+                app_settings = COALESCE($9::jsonb, app_settings),
+                account_defaults = COALESCE($10::jsonb, account_defaults)
+            WHERE id = $11
+            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_day_lock_expires_at, max_loss_per_trade, max_loss_per_trade_enabled, max_loss_per_trade_lock_expires_at, trade_confirmation, show_tooltips, superuser, beta_user, referral_code, app_settings, account_defaults`,
+            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerDayLockExpiresAt, maxLossPerTrade, maxLossPerTradeEnabled, maxLossPerTradeLockExpiresAt, tradeConfirmation, showTooltips, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
         );
 
         if (result.rows.length === 0) {
@@ -396,15 +403,17 @@ const updateUserSettings = async (req, res) => {
         return res.json({
             maxLossPerDay: user.max_loss_per_day || 0,
             maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
+            maxLossPerDayLockExpiresAt: user.max_loss_per_day_lock_expires_at,
             maxLossPerTrade: user.max_loss_per_trade || 0,
             maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
+            maxLossPerTradeLockExpiresAt: user.max_loss_per_trade_lock_expires_at,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,
             appSettings: user.app_settings || {},
-            accountDefaults: user.account_defaults || {}
+            accountDefaults: user.account_defaults || {},
         });
     } catch (error) {
         logger.error('Error updating user settings:', error);
