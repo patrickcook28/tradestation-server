@@ -206,6 +206,10 @@ app.use('/', routes.watchlistsRouter);
 // Trade journals routes (all require auth within router)
 app.use('/', routes.tradeJournalsRouter);
 
+// Analytics routes
+const analyticsRoutes = require('./routes/analytics');
+app.use('/analytics', analyticsRoutes);
+
 // Indicators proxy route (pass-through Alpha Vantage) and admin cache info
 app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
 app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));

@@ -88,10 +88,6 @@ const register = async (req, res) => {
                         message: beta_user ? 'Welcome to the beta!' : 'Account created successfully',
                         id: newUser.id,
                         email: email,
-                        maxLossPerDay: 0,
-                        maxLossPerDayEnabled: false,
-                        maxLossPerTrade: 0,
-                        maxLossPerTradeEnabled: false,
                         superuser: false,
                         referral_code: final_referral_code
                     })
@@ -143,10 +139,6 @@ const login = async (req, res) => {
             token,
             id: user.id,
             email: user.email,
-            maxLossPerDay: user.max_loss_per_day || 0,
-            maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
-            maxLossPerTrade: user.max_loss_per_trade || 0,
-            maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,
@@ -339,12 +331,6 @@ const getUserSettings = async (req, res) => {
         }
 
         return res.json({
-            maxLossPerDay: user.max_loss_per_day || 0,
-            maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
-            maxLossPerDayLockExpiresAt: user.max_loss_per_day_lock_expires_at,
-            maxLossPerTrade: user.max_loss_per_trade || 0,
-            maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
-            maxLossPerTradeLockExpiresAt: user.max_loss_per_trade_lock_expires_at,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
             superuser: user.superuser || false,
@@ -420,6 +406,7 @@ const updateUserSettings = async (req, res) => {
         return res.status(500).json({ error: 'Failed to update user settings' });
     }
 };
+
 
 // Apply referral code to existing user
 const applyReferralCode = async (req, res) => {
@@ -623,12 +610,61 @@ const updateMaintenanceMode = async (req, res) => {
     }
 };
 
+// Set account-specific lockout
+const setAccountLossLimitLockout = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { accountId, isPaperTrading, lockoutType, lockExpiresAt } = req.body;
+
+        if (!accountId || !lockoutType) {
+            return res.status(400).json({ error: 'Account ID and lockout type are required' });
+        }
+
+        // Get current account defaults
+        const currentResult = await pool.query(
+            'SELECT account_defaults FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (currentResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const currentAccountDefaults = currentResult.rows[0].account_defaults || {};
+        const accountKey = `${accountId}_${isPaperTrading ? 'paper' : 'live'}`;
+        
+        // Update the specific account's lockout settings
+        const updatedAccountDefaults = {
+            ...currentAccountDefaults,
+            [accountKey]: {
+                ...currentAccountDefaults[accountKey],
+                [`${lockoutType}LockExpiresAt`]: lockExpiresAt
+            }
+        };
+
+        // Update the database
+        const result = await pool.query(
+            'UPDATE users SET account_defaults = $1 WHERE id = $2 RETURNING account_defaults',
+            [JSON.stringify(updatedAccountDefaults), userId]
+        );
+
+        return res.json({ 
+            success: true, 
+            accountDefaults: result.rows[0].account_defaults 
+        });
+    } catch (error) {
+        logger.error('Error setting account loss limit lockout:', error);
+        return res.status(500).json({ error: 'Failed to set account loss limit lockout' });
+    }
+};
+
 module.exports = {
     register,
     login,
     authenticateToken,
     getUserSettings,
     updateUserSettings,
+    setAccountLossLimitLockout,
     applyReferralCode,
     getCostBasisData,
     updateCostBasisData,

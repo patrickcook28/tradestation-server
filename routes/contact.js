@@ -97,7 +97,7 @@ router.get('/submissions', async (req, res) => {
   try {
     // Check if user is admin (you may want to add proper admin authentication)
     const { user } = req;
-    if (!user || !user.is_superuser) {
+    if (!user || !user.superuser) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -122,7 +122,7 @@ router.get('/submissions', async (req, res) => {
 router.put('/submissions/:id', async (req, res) => {
   try {
     const { user } = req;
-    if (!user || !user.is_superuser) {
+    if (!user || !user.superuser) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
