@@ -372,8 +372,8 @@ router.get('/session-activities', async (req, res) => {
   }
 });
 
-// DELETE /analytics/events/user/:userId - Delete all analytics events for a specific user (superuser only)
-router.delete('/analytics/events/user/:userId', async (req, res) => {
+// DELETE /events/user/:userId - Delete all analytics events for a specific user (superuser only)
+router.delete('/events/user/:userId', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {

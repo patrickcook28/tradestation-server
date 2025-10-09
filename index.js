@@ -61,6 +61,10 @@ const app = express();
 app.use(cors());
 // Sentry request handler (v8 no-op here; using setupExpressErrorHandler below)
 
+// Setup Stripe webhook handler (MUST be before express.json() middleware)
+const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
+setupStripeWebhook(app);
+
 const publicDir = path.join(__dirname, './public');
 
 app.use(express.static(publicDir));
