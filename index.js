@@ -51,20 +51,6 @@ const pusher = new Pusher({
 
 const app = express();
 
-// Handle OPTIONS requests FIRST - before any other middleware
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    const origin = req.headers.origin || '*';
-    console.log(`[CORS] OPTIONS request from origin: ${origin} to path: ${req.path}`);
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Stream-Epoch');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    return res.sendStatus(200);
-  }
-  next();
-});
-
 app.use(cors());
 
 setupStripeWebhook(app);
@@ -357,4 +343,5 @@ server.listen(PORT, () => {
   // startPeriodicMonitoring(60000);
 });
 
-module.exports = { app, server }; 
+// Export app for Vercel serverless functions
+module.exports = app; 
