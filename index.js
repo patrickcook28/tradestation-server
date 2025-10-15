@@ -51,6 +51,20 @@ const pusher = new Pusher({
 
 const app = express();
 
+// Handle OPTIONS requests FIRST - before any other middleware
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.origin || '*';
+    console.log(`[CORS] OPTIONS request from origin: ${origin} to path: ${req.path}`);
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Stream-Epoch');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(cors());
 
 setupStripeWebhook(app);
@@ -60,14 +74,6 @@ const publicDir = path.join(__dirname, './public');
 app.use(express.static(publicDir));
 app.use(express.urlencoded({extended: 'false'}));
 app.use(express.json());
-
-// Handle OPTIONS requests before they reach route-level auth middleware
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
 
 // Request monitoring middleware (tracks pending requests and identifies bottlenecks)
 const { trackRequestStart, statusEndpoint, startPeriodicMonitoring } = require('./utils/requestMonitor');
