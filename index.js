@@ -52,12 +52,19 @@ const app = express();
 
 // Configure CORS - completely open for all origins
 app.use(cors({
-  origin: true, // Allow all origins
+  origin: function (origin, callback) {
+    // Allow all origins (including no origin for same-origin requests)
+    callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Stream-Epoch', 'Accept', 'Origin', 'X-Requested-With'],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 }));
+
+// Explicit OPTIONS handler for all routes (helps with Vercel serverless)
+app.options('*', cors());
 // Sentry request handler (v8 no-op here; using setupExpressErrorHandler below)
 
 // Setup Stripe webhook handler (MUST be before express.json() middleware)
