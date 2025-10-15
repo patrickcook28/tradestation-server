@@ -50,12 +50,13 @@ const pusher = new Pusher({
 
 const app = express();
 
-// Configure CORS for local development
+// Configure CORS - completely open for all origins
 app.use(cors({
-  origin: ['http://localhost:3002', 'http://localhost:3000', 'https://localhost:3000', 'https://localhost:3001'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Stream-Epoch'],
-  credentials: true
+  origin: true, // Allow all origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Stream-Epoch', 'Accept', 'Origin', 'X-Requested-With'],
+  credentials: true,
+  optionsSuccessStatus: 200
 }));
 // Sentry request handler (v8 no-op here; using setupExpressErrorHandler below)
 
