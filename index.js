@@ -16,6 +16,7 @@ const logger = require('./config/logging');
 const fs = require('fs');
 const hbs = require('hbs');
 const { authenticateToken } = require('./routes/auth');
+const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
 
 dotenv.config({ path: './.env'});
 
@@ -50,25 +51,9 @@ const pusher = new Pusher({
 
 const app = express();
 
-// Configure CORS - completely open for all origins
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow all origins (including no origin for same-origin requests)
-    callback(null, true);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Stream-Epoch', 'Accept', 'Origin', 'X-Requested-With'],
-  credentials: true,
-  optionsSuccessStatus: 200,
-  preflightContinue: false
-}));
+app.use(cors());
 
-// Explicit OPTIONS handler for all routes (helps with Vercel serverless)
-app.options('*', cors());
-// Sentry request handler (v8 no-op here; using setupExpressErrorHandler below)
 
-// Setup Stripe webhook handler (MUST be before express.json() middleware)
-const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
 setupStripeWebhook(app);
 
 const publicDir = path.join(__dirname, './public');
@@ -353,13 +338,7 @@ server.on('error', (error) => {
 
 server.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
-  console.log(`Server configured for unlimited streaming connections`);
-  console.log(`- maxConnections: unlimited (0)`);
-  console.log(`- timeout: disabled (0)`);
-  console.log(`- keepAliveTimeout: 65s`);
-  console.log(`\nRequest monitoring enabled:`);
   console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
-  console.log(`- CLI tool: node scripts/check_server_status.js`);
   
   // Periodic monitoring disabled - use debug endpoint instead
   // startPeriodicMonitoring(60000);
