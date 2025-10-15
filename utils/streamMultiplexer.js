@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
 const { buildUrl, getUserAccessToken } = require('./tradestationProxy');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
+const { getFetchOptionsWithAgent } = require('./httpAgent');
 
 class StreamMultiplexer {
   /**
@@ -18,6 +19,8 @@ class StreamMultiplexer {
     this.keyToConnection = new Map();
     /** @type {Map<string, Promise<void>>} */
     this.pendingOpens = new Map();
+    /** @type {Map<string, Promise<void>>} */
+    this.pendingCleanups = new Map();
     /**
      * Tracks the most recent key per user for streams that should be exclusive
      * (one active upstream per user). Used by addExclusiveSubscriber.
@@ -28,9 +31,20 @@ class StreamMultiplexer {
 
   async ensureUpstream(userId, deps) {
     const key = this.makeKey(userId, deps);
+    
+    // CRITICAL: Wait for any pending cleanup to complete before opening new stream
+    // This ensures we always get fresh data from TradeStation, not mid-stream
+    const pendingCleanup = this.pendingCleanups.get(key);
+    if (pendingCleanup) {
+      console.log(`[${this.name}] Waiting for cleanup to complete for key=${key} before opening new stream...`);
+      try { await pendingCleanup; } catch (_) {}
+      console.log(`[${this.name}] Cleanup complete for key=${key}, proceeding with fresh stream open`);
+    }
+    
     const entry = this.keyToConnection.get(key);
     if (entry && entry.upstream) {
-      console.log(`[${this.name}] Reusing upstream for key=${key}. Subscribers=${entry.subscribers.size}`);
+      const now = new Date().toISOString();
+      console.log(`[${this.name}] [${now}] ♻️  Reusing upstream for key=${key}. Subscribers=${entry.subscribers.size}`);
       return entry;
     }
 
@@ -40,7 +54,8 @@ class StreamMultiplexer {
       try { await inFlight; } catch (e) { console.log(`[${this.name}] Pending open failed for key=${key}`, e && e.message); }
       const after = this.keyToConnection.get(key);
       if (after && after.upstream) {
-        console.log(`[${this.name}] Reusing just-opened upstream for key=${key}.`);
+        const now = new Date().toISOString();
+        console.log(`[${this.name}] [${now}] ♻️  Reusing just-opened upstream for key=${key}`);
         return after;
       }
     }
@@ -69,13 +84,21 @@ class StreamMultiplexer {
 
     let upstream;
     try {
-      console.log(`[${this.name}] Opening upstream for key=${key} url=${url}`);
-      upstream = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${accessToken}` } });
+      const openAttemptTime = Date.now();
+      console.log(`[${this.name}] [${openAttemptTime}] Opening upstream for key=${key} url=${url}`);
+      const fetchStartTime = Date.now();
+      
+      // Use 30 second timeout for initial connection (TradeStation can be slow)
+      upstream = await fetch(url, getFetchOptionsWithAgent(url, { method: 'GET', headers: { 'Authorization': `Bearer ${accessToken}` } }, 30000));
+      
+      const now = new Date().toISOString();
+      console.log(`[${this.name}] [${now}] ✅ TradeStation API responded (status: ${upstream.status}) for key=${key}`);
+      
       if (!upstream.ok && upstream.status === 401) {
         try {
           await refreshAccessTokenForUserLocked(userId);
           console.log(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
-          upstream = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` } });
+          upstream = await fetch(url, getFetchOptionsWithAgent(url, { method: 'GET', headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` } }, 15000));
         } catch (_) {}
       }
     } catch (networkErr) {
@@ -111,14 +134,31 @@ class StreamMultiplexer {
     } catch (_) {}
 
     const readable = upstream.body;
-    const state = entry || { key, subscribers: new Set(), upstream: null, readable: null, lastActivityAt: Date.now(), heartbeatTimer: undefined };
+    const state = entry || { key, subscribers: new Set(), upstream: null, readable: null, lastActivityAt: Date.now(), heartbeatTimer: undefined, firstDataSent: false };
     state.upstream = upstream; state.readable = readable; state.lastActivityAt = Date.now();
     this.keyToConnection.set(key, state);
 
     readable.on('data', (chunk) => {
       try {
         state.lastActivityAt = Date.now();
-        for (const res of state.subscribers) { try { res.write(chunk); } catch (_) {} }
+        
+        // Log first data packet sent to clients
+        if (!state.firstDataSent) {
+          state.firstDataSent = true;
+          const now = new Date().toISOString();
+          console.log(`[${this.name}] [${now}] 📤 First data sent to ${state.subscribers.size} client(s) for key=${key}`);
+        }
+        
+        // Use setImmediate to avoid blocking the event loop when broadcasting to many subscribers
+        setImmediate(() => {
+          for (const res of state.subscribers) { 
+            try { 
+              res.write(chunk); 
+            } catch (writeErr) {
+              // Silently handle write errors (client disconnected, etc.)
+            }
+          }
+        });
       } catch (error) {
         console.error(`[${this.name}] Error handling data for key=${key}:`, error);
       }
@@ -149,14 +189,13 @@ class StreamMultiplexer {
 
   async addSubscriber(userId, deps, res) {
     const key = this.makeKey(userId, deps);
+    
+    // Extract stream epoch from request headers for connection tracking
+    const streamEpoch = res.req?.headers?.['x-stream-epoch'] || 'unknown';
+    const connectionId = `${userId}|${key}|${streamEpoch}|${Date.now()}`;
+    
     let state;
     try {
-      // Prevent concurrent subscriber mutations for the same key
-      if (!this.pendingOpens.has(key)) {
-        this.pendingOpens.set(key, Promise.resolve());
-      }
-      const lock = this.pendingOpens.get(key);
-      try { await lock; } catch (_) {}
       state = await this.ensureUpstream(userId, deps);
       if (!state) {
         try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
@@ -173,29 +212,132 @@ class StreamMultiplexer {
       try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
       try { return res.status(500).json({ error: 'Internal server error', details: error.message }); } catch (_) { try { res.end(); } catch (_) {} return; }
     }
+    
+    // Check if this exact response object is already subscribed (shouldn't happen, but defensive)
+    if (state.subscribers.has(res)) {
+      console.log(`[${this.name}] ⚠️  Response object already subscribed for userId=${userId}, key=${key}. Ignoring duplicate.`);
+      return; // Don't add the same response twice
+    }
+    
+    // Tag the response object for debugging
+    res._connectionId = connectionId;
+    res._subscribedAt = Date.now();
+    
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    if (state.subscribers.size > 0) {
-      console.log(`[${this.name}] Replacing existing subscriber(s) for key=${key}.`);
-      for (const existing of state.subscribers) { try { existing.end(); } catch (_) {} }
-      state.subscribers.clear();
-    }
+    // Add the new subscriber (supports multiple concurrent subscribers per key)
     state.subscribers.add(res);
-    console.log(`[${this.name}] Subscriber added for key=${key}. Subscribers=${state.subscribers.size}. Active upstreams=${this.keyToConnection.size}`);
+    const now = new Date().toISOString();
+    console.log(`[${this.name}] [${now}] ✅ Subscriber added for userId=${userId}, key=${key}. Subscribers=${state.subscribers.size}. Active upstreams=${this.keyToConnection.size} [connId=${connectionId}]`);
 
-    const onClose = () => {
+    let cleanupDone = false;
+    const onClose = (reason) => {
+      if (cleanupDone) return; // Prevent multiple cleanups from different events
+      cleanupDone = true;
+      
+      const wasInSet = state.subscribers.has(res);
       try { state.subscribers.delete(res); } catch (_) {}
+      
+      if (wasInSet) {
+        const now = new Date().toISOString();
+        const duration = Date.now() - (res._subscribedAt || 0);
+        console.log(`[${this.name}] [${now}] 🔌 Subscriber disconnected (${reason || 'close'}) for userId=${userId}, key=${key}. Remaining=${state.subscribers.size} [connId=${connectionId}, duration=${duration}ms]`);
+      }
+      
       if (state.subscribers.size === 0) {
-        try { state.readable && state.readable.destroy && state.readable.destroy(); } catch (_) {}
+        // Create cleanup promise to prevent race conditions on page refresh
+        let resolveCleanup;
+        const cleanupPromise = new Promise((resolve) => { resolveCleanup = resolve; });
+        this.pendingCleanups.set(key, cleanupPromise);
+        
+        const now = new Date().toISOString();
+        console.log(`[${this.name}] [${now}] 🧹 Closing upstream (no subscribers) for key=${key}`);
+        try { 
+          if (state.readable && state.readable.destroy) {
+            state.readable.destroy();
+          }
+          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
+            state.upstream.body.destroy();
+          }
+        } catch (err) {
+          console.error(`[${this.name}] Error destroying upstream for key=${key}:`, err.message);
+        }
         this.keyToConnection.delete(key);
-        console.log(`[${this.name}] Subscriber closed for key=${key}. Active upstreams=${this.keyToConnection.size}`);
+        
+        // Resolve cleanup promise to unblock any waiting new connections, then remove it
+        try { resolveCleanup(); } catch (_) {}
+        this.pendingCleanups.delete(key);
       }
     };
-    res.on('close', onClose);
-    // Release lock
-    try { this.pendingOpens.delete(key); } catch (_) {}
+    
+    // Listen to multiple events to ensure cleanup happens
+    res.on('close', () => onClose('close'));
+    res.on('finish', () => onClose('finish'));
+    res.on('error', (err) => onClose('error'));
+    
+    // CRITICAL: Also listen for the request being aborted/closed
+    // This catches cases where the client aborts but the response events don't fire immediately
+    if (res.req) {
+      res.req.on('close', () => {
+        // Only trigger cleanup if the request closed but response hasn't ended
+        if (!res.writableEnded && !res.finished) {
+          onClose('req-close');
+        }
+      });
+      res.req.on('aborted', () => {
+        if (!res.writableEnded && !res.finished) {
+          onClose('req-aborted');
+        }
+      });
+    }
+    
+    // Defensive: Check if connection is already closed/aborted at subscription time
+    if (res.req?.aborted || res.req?.destroyed) {
+      console.log(`[${this.name}] ⚠️  Request already aborted/destroyed at subscription time for key=${key} [connId=${connectionId}]`);
+      onClose('already-closed');
+      return;
+    }
+    
+    // Defensive: Set a timeout to detect stale connections (no activity for 5 minutes = probably dead)
+    const staleCheckInterval = setInterval(() => {
+      if (res.writableEnded || res.finished || res.req?.destroyed) {
+        clearInterval(staleCheckInterval);
+        // Connection is already ended, make sure cleanup happened
+        if (state.subscribers.has(res)) {
+          console.log(`[${this.name}] ⚠️  Detected stale ended connection still in subscribers set for key=${key} [connId=${connectionId}]`);
+          onClose('stale-detection');
+        }
+      }
+    }, 60000); // Check every 60 seconds
+    
+    // Clear interval when connection closes
+    const originalOnClose = onClose;
+    const wrappedOnClose = (reason) => {
+      clearInterval(staleCheckInterval);
+      originalOnClose(reason);
+    };
+    
+    // Replace the onClose references with wrapped version
+    res.removeAllListeners('close');
+    res.removeAllListeners('finish');
+    res.removeAllListeners('error');
+    res.on('close', () => wrappedOnClose('close'));
+    res.on('finish', () => wrappedOnClose('finish'));
+    res.on('error', (err) => wrappedOnClose('error'));
+    if (res.req) {
+      res.req.on('close', () => {
+        if (!res.writableEnded && !res.finished) {
+          wrappedOnClose('req-close');
+        }
+      });
+      res.req.on('aborted', () => {
+        if (!res.writableEnded && !res.finished) {
+          wrappedOnClose('req-aborted');
+        }
+      });
+    }
   }
 
   /**
@@ -225,6 +367,12 @@ class StreamMultiplexer {
   closeKey(key) {
     const state = this.keyToConnection.get(key);
     if (!state) return;
+    
+    // Create cleanup promise for thread-safety
+    let resolveCleanup;
+    const cleanupPromise = new Promise((resolve) => { resolveCleanup = resolve; });
+    this.pendingCleanups.set(key, cleanupPromise);
+    
     try {
       if (state.readable && state.readable.destroy) state.readable.destroy();
     } catch (_) {}
@@ -234,6 +382,76 @@ class StreamMultiplexer {
     try { state.subscribers && state.subscribers.clear && state.subscribers.clear(); } catch (_) {}
     this.keyToConnection.delete(key);
     console.log(`[${this.name}] Force-closed upstream for key=${key}. Active upstreams=${this.keyToConnection.size}`);
+    
+    // Resolve cleanup promise to unblock any waiting new connections
+    try { resolveCleanup(); } catch (_) {}
+    this.pendingCleanups.delete(key);
+  }
+
+  /**
+   * Get diagnostic information about all active streams and their subscribers.
+   * Useful for debugging connection leaks.
+   * @returns {Array<{key: string, subscriberCount: number, subscribers: Array<{connectionId: string, duration: number, active: boolean}>}>}
+   */
+  getDebugInfo() {
+    const info = [];
+    for (const [key, state] of this.keyToConnection.entries()) {
+      const subscribers = [];
+      for (const res of state.subscribers) {
+        const connectionId = res._connectionId || 'unknown';
+        const subscribedAt = res._subscribedAt || 0;
+        const duration = Date.now() - subscribedAt;
+        const active = !(res.writableEnded || res.finished || res.destroyed || res.req?.destroyed);
+        subscribers.push({ connectionId, duration, active });
+      }
+      info.push({
+        key,
+        subscriberCount: state.subscribers.size,
+        subscribers
+      });
+    }
+    return info;
+  }
+
+  /**
+   * Clean up any stale/dead connections that are still in the subscribers set.
+   * This is a defensive cleanup that shouldn't normally be needed, but can help
+   * recover from connection tracking bugs.
+   * @returns {number} Number of stale connections removed
+   */
+  cleanupStaleConnections() {
+    let removed = 0;
+    for (const [key, state] of this.keyToConnection.entries()) {
+      const stale = [];
+      for (const res of state.subscribers) {
+        // Consider a connection stale if it's been ended/destroyed but still in the set
+        if (res.writableEnded || res.finished || res.destroyed || res.req?.destroyed || res.req?.aborted) {
+          stale.push(res);
+        }
+      }
+      
+      for (const res of stale) {
+        state.subscribers.delete(res);
+        removed++;
+        const connectionId = res._connectionId || 'unknown';
+        console.log(`[${this.name}] 🧹 Removed stale connection from subscribers set: ${connectionId} for key=${key}`);
+      }
+      
+      // If no subscribers left after cleanup, close the upstream
+      if (state.subscribers.size === 0 && stale.length > 0) {
+        console.log(`[${this.name}] 🧹 No subscribers remaining after stale cleanup, closing upstream for key=${key}`);
+        try {
+          if (state.readable && state.readable.destroy) state.readable.destroy();
+        } catch (_) {}
+        this.keyToConnection.delete(key);
+      }
+    }
+    
+    if (removed > 0) {
+      console.log(`[${this.name}] 🧹 Cleaned up ${removed} stale connection(s). Active upstreams: ${this.keyToConnection.size}`);
+    }
+    
+    return removed;
   }
 }
 

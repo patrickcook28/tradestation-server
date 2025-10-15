@@ -4,6 +4,7 @@ const { decryptToken } = require('./secureCredentials');
 const logger = require('../config/logging');
 const { captureException, captureMessage } = require('./errorReporting');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
+const { getFetchOptionsWithAgent } = require('./httpAgent');
 
 const getTradeStationBaseUrl = (paperTrading) => {
   return paperTrading ? 'https://sim-api.tradestation.com/v3' : 'https://api.tradestation.com/v3';
@@ -68,7 +69,7 @@ const tradestationRequest = async (userId, {
   // Optional: simple request logging for future enhancement
   // try { logger && logger.tradestation && logger.tradestation(url); } catch (_) {}
 
-  let response = await fetch(url, options);
+  let response = await fetch(url, getFetchOptionsWithAgent(url, options));
   let text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
@@ -82,7 +83,7 @@ const tradestationRequest = async (userId, {
         ...fetchHeaders,
         'Authorization': `Bearer ${accessToken}`,
       };
-      response = await fetch(url, { ...options, headers: retryHeaders });
+      response = await fetch(url, getFetchOptionsWithAgent(url, { ...options, headers: retryHeaders }));
       text = await response.text();
       try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
     } catch (err) {
@@ -138,26 +139,26 @@ module.exports = {
       const url = buildUrl(paperTrading, path, query);
 
       // Initiate upstream streaming request
-      let upstream = await fetch(url, {
+      let upstream = await fetch(url, getFetchOptionsWithAgent(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           ...headers,
         },
-      });
+      }));
 
       // If unauthorized, refresh once and retry
       if (upstream.status === 401) {
         try {
           const refreshed = await refreshAccessTokenForUserLocked(req.user.id);
           accessToken = refreshed.access_token;
-          upstream = await fetch(url, {
+          upstream = await fetch(url, getFetchOptionsWithAgent(url, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${accessToken}`,
               ...headers,
             },
-          });
+          }));
         } catch (err) {
           try { captureException(err, { scope: 'streamTradestation-refresh', path }); } catch (_) {}
           return res.status(401).json({ error: 'Unauthorized' });

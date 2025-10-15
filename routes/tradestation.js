@@ -6,6 +6,7 @@ const { getCommonFuturesContracts, getContractSeries } = require('../utils/contr
 const { getUserAccessToken } = require('../utils/tradestationProxy');
 const { getUserCredentials } = require('../utils/secureCredentials');
 const { refreshAccessTokenForUserLocked } = require('../utils/tokenRefresh');
+const { getFetchOptionsWithAgent } = require('../utils/httpAgent');
 
 // Get historical orders from local database for performance analysis
 const getLocalHistoricalOrders = async (req, res) => {
@@ -92,13 +93,13 @@ const handleOAuthCallback = async (req, res) => {
   };
 
   try {
-    const response = await fetch(token_url, {
+    const response = await fetch(token_url, getFetchOptionsWithAgent(token_url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(data)
-    });
+    }));
 
     if (response.ok) {
       const json_response = await response.json();
@@ -270,11 +271,11 @@ const refreshAccessTokenForUser = async (userId) => {
     'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
     'refresh_token': oauthCredentials.refresh_token
   };
-  const response = await fetch(token_url, {
+  const response = await fetch(token_url, getFetchOptionsWithAgent(token_url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
-  });
+  }));
   if (!response.ok) {
     throw new Error('Attempt to refresh token failed due to Tradestation response');
   }

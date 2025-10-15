@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
 const { TTLCache } = require('../utils/ttlCache');
 const { authenticateToken } = require('./auth');
+const { getFetchOptionsWithAgent } = require('../utils/httpAgent');
 
 // Allowed indicator functions for v1
 const ALLOWED_FUNCTIONS = new Set(['SMA', 'EMA', 'VWAP', 'BBANDS']);
@@ -129,7 +130,7 @@ async function getIndicator(req, res) {
         indicatorCache.refresh(signature, async () => {
           const params = new URLSearchParams(outgoing);
           const url = `https://www.alphavantage.co/query?${params.toString()}`;
-          const r = await fetch(url);
+          const r = await fetch(url, getFetchOptionsWithAgent(url, {}));
           if (!r.ok) throw new Error(`Alpha Vantage error ${r.status}`);
           const json = await r.json();
           indicatorCache.set(signature, json, ttlMs, { interval: outgoing.interval || 'daily', function: fn });
@@ -142,7 +143,7 @@ async function getIndicator(req, res) {
     // No cache or first time -> fetch and cache
     const params = new URLSearchParams(outgoing);
     const url = `https://www.alphavantage.co/query?${params.toString()}`;
-    const response = await fetch(url);
+    const response = await fetch(url, getFetchOptionsWithAgent(url, {}));
     if (!response.ok) {
       return res.status(response.status).json({ error: 'Alpha Vantage request failed' });
     }
@@ -166,25 +167,78 @@ async function getCacheInfo(req, res) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    // Helper to summarize duplicate upstreams per user for a stream manager
+    // Helper to summarize stream connections and detect true duplicates
     const summarizeManager = (mgr, name) => {
       const map = mgr && mgr.keyToConnection;
-      const summary = { name, activeUpstreams: undefined, usersWithMultiple: 0, duplicates: [] };
+      const summary = { 
+        name, 
+        activeUpstreams: undefined, 
+        uniqueKeys: 0,
+        usersWithTrueDuplicates: 0, 
+        trueDuplicates: [],
+        userStreams: []
+      };
       if (!map || typeof map.size !== 'number') return summary;
       summary.activeUpstreams = map.size;
-      const counts = new Map();
+      
+      // Track all keys and detect true duplicates
+      const keyOccurrences = new Map(); // key -> count
+      const userToKeys = new Map(); // userId -> Set of keys
+      
       try {
         for (const [key] of map.entries()) {
-          const userId = String(key).split('|')[0];
-          counts.set(userId, (counts.get(userId) || 0) + 1);
+          const keyStr = String(key);
+          const userId = keyStr.split('|')[0];
+          
+          // Count key occurrences for duplicate detection
+          keyOccurrences.set(keyStr, (keyOccurrences.get(keyStr) || 0) + 1);
+          
+          // Track keys per user
+          if (!userToKeys.has(userId)) {
+            userToKeys.set(userId, new Set());
+          }
+          userToKeys.get(userId).add(keyStr);
         }
+        
+        // Count unique keys
+        summary.uniqueKeys = keyOccurrences.size;
+        
+        // Find true duplicates (same exact key multiple times)
+        const duplicateKeys = [];
+        for (const [key, count] of keyOccurrences.entries()) {
+          if (count > 1) {
+            duplicateKeys.push({ key, count });
+          }
+        }
+        
+        // Process per-user information
+        for (const [userId, keys] of userToKeys.entries()) {
+          const keyArray = Array.from(keys);
+          const hasDuplicate = keyArray.some(key => keyOccurrences.get(key) > 1);
+          
+          if (hasDuplicate) {
+            summary.usersWithTrueDuplicates += 1;
+          }
+          
+          // Add to userStreams list (show users with multiple different streams)
+          if (keyArray.length > 1) {
+            summary.userStreams.push({
+              userId,
+              streamCount: keyArray.length,
+              keys: keyArray.map(k => k.split('|').slice(1).join('|')) // Remove userId prefix
+            });
+          }
+        }
+        
+        // Add true duplicate information
+        summary.trueDuplicates = duplicateKeys.map(d => ({
+          key: d.key.split('|').slice(1).join('|'), // Remove userId prefix
+          userId: d.key.split('|')[0],
+          count: d.count
+        }));
+        
       } catch (_) {}
-      for (const [userId, count] of counts.entries()) {
-        if (count > 1) {
-          summary.usersWithMultiple += 1;
-          summary.duplicates.push({ userId, count });
-        }
-      }
+      
       return summary;
     };
 

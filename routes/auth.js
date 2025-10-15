@@ -309,7 +309,7 @@ const getUserSettings = async (req, res) => {
             `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
                     max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
                     trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
-                    app_settings, account_defaults,
+                    app_settings, account_defaults, cost_basis_data,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
              FROM users WHERE id = $1`,
             [userId]
@@ -330,6 +330,55 @@ const getUserSettings = async (req, res) => {
             logger.error('Error fetching subscription status in getUserSettings:', err);
         }
 
+        // Get maintenance status
+        let maintenanceStatus = { isEnabled: false, message: 'System is operational' };
+        try {
+            const maintenanceResult = await pool.query(
+                'SELECT is_enabled, message, enabled_at, enabled_by_user_id FROM maintenance_mode ORDER BY id DESC LIMIT 1'
+            );
+            if (maintenanceResult.rows.length > 0) {
+                const m = maintenanceResult.rows[0];
+                maintenanceStatus = {
+                    isEnabled: m.is_enabled,
+                    message: m.message,
+                    enabledAt: m.enabled_at,
+                    enabledByUserId: m.enabled_by_user_id
+                };
+            }
+        } catch (err) {
+            logger.error('Error fetching maintenance status in getUserSettings:', err);
+        }
+
+        // Get ticker options
+        const { getCommonFuturesContracts } = require('../utils/contractSymbols');
+        const futuresContracts = getCommonFuturesContracts();
+        
+        const commonStocks = [
+            { symbol: 'AAPL', name: 'Apple Inc.' },
+            { symbol: 'MSFT', name: 'Microsoft Corporation' },
+            { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+            { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+            { symbol: 'TSLA', name: 'Tesla Inc.' },
+            { symbol: 'NVDA', name: 'NVIDIA Corporation' },
+            { symbol: 'META', name: 'Meta Platforms Inc.' },
+            { symbol: 'SPY', name: 'SPDR S&P 500 ETF' },
+            { symbol: 'QQQ', name: 'Invesco QQQ Trust' },
+            { symbol: 'IWM', name: 'iShares Russell 2000 ETF' }
+        ];
+        
+        const tickerOptions = [
+            ...futuresContracts.map(f => ({
+                value: f.currentContract,
+                label: `${f.currentContract} - ${f.name}`,
+                type: 'futures'
+            })),
+            ...commonStocks.map(s => ({
+                value: s.symbol,
+                label: `${s.symbol} - ${s.name}`,
+                type: 'stock'
+            }))
+        ];
+
         return res.json({
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
@@ -339,7 +388,10 @@ const getUserSettings = async (req, res) => {
             hasTradeStationCredentials: user.has_tradestation_credentials === true,
             appSettings: user.app_settings || {},
             accountDefaults: user.account_defaults || {},
-            subscriptionStatus: subscriptionStatus
+            subscriptionStatus: subscriptionStatus,
+            costBasisData: user.cost_basis_data || {},
+            maintenanceStatus: maintenanceStatus,
+            tickerOptions: { success: true, suggestions: tickerOptions }
         });
     } catch (error) {
         logger.error('Error getting user settings:', error);

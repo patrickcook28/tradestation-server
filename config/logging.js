@@ -51,12 +51,13 @@ const logger = {
     }
   },
   
-  // Special logging for authentication
+  // Special logging for authentication (disabled - too noisy)
   auth: (method, path, status, userId = null) => {
-    if (CURRENT_LOG_LEVEL >= LOG_LEVELS.INFO) {
-      const userInfo = userId ? ` - User: ${userId}` : '';
-      console.log(`AUTH: ${method} ${path} - ${status}${userInfo}`);
-    }
+    // Disabled - uncomment if needed for debugging
+    // if (CURRENT_LOG_LEVEL >= LOG_LEVELS.DEBUG) {
+    //   const userInfo = userId ? ` - User: ${userId}` : '';
+    //   console.log(`AUTH: ${method} ${path} - ${status}${userInfo}`);
+    // }
   },
   
   // Special logging for TradeStation API

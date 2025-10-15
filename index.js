@@ -50,15 +50,13 @@ const pusher = new Pusher({
 
 const app = express();
 
-// Configure CORS properly for frontend on port 3002
-// app.use(cors({
-//   origin: ['http://localhost:3002', 'http://localhost:3000'],
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization'],
-//   credentials: true
-// }));
-
-app.use(cors());
+// Configure CORS for local development
+app.use(cors({
+  origin: ['http://localhost:3002', 'http://localhost:3000', 'https://localhost:3000', 'https://localhost:3001'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Stream-Epoch'],
+  credentials: true
+}));
 // Sentry request handler (v8 no-op here; using setupExpressErrorHandler below)
 
 // Setup Stripe webhook handler (MUST be before express.json() middleware)
@@ -70,6 +68,10 @@ const publicDir = path.join(__dirname, './public');
 app.use(express.static(publicDir));
 app.use(express.urlencoded({extended: 'false'}));
 app.use(express.json());
+
+// Request monitoring middleware (tracks pending requests and identifies bottlenecks)
+const { trackRequestStart, statusEndpoint, startPeriodicMonitoring } = require('./utils/requestMonitor');
+app.use(trackRequestStart);
 
 // Central async error wrapper helper
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -137,6 +139,59 @@ app.get('/status', asyncHandler(async (req, res) => {
     dbStatus = 'Error: ' + err.message;
   }
   res.render('status', { dbStatus, users });
+}));
+
+// Debug endpoint for monitoring server responsiveness
+app.get('/debug/server-status', asyncHandler(statusEndpoint));
+
+// Debug endpoint for stream diagnostics
+app.get('/debug/streams', asyncHandler(async (req, res) => {
+  try {
+    const barsManager = require('./utils/barsStreamManager');
+    const quotesManager = require('./utils/quoteStreamManager');
+    const ordersManager = require('./utils/ordersStreamManager');
+    const positionsManager = require('./utils/positionsStreamManager');
+    
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      bars: barsManager.getDebugInfo ? barsManager.getDebugInfo() : [],
+      quotes: quotesManager.getDebugInfo ? quotesManager.getDebugInfo() : [],
+      orders: ordersManager.getDebugInfo ? ordersManager.getDebugInfo() : [],
+      positions: positionsManager.getDebugInfo ? positionsManager.getDebugInfo() : []
+    };
+    
+    res.json(diagnostics);
+  } catch (error) {
+    console.error('Error getting stream diagnostics:', error);
+    res.status(500).json({ error: 'Failed to get stream diagnostics', message: error.message });
+  }
+}));
+
+// Debug endpoint to cleanup stale connections
+app.post('/debug/streams/cleanup', asyncHandler(async (req, res) => {
+  try {
+    const barsManager = require('./utils/barsStreamManager');
+    const quotesManager = require('./utils/quoteStreamManager');
+    const ordersManager = require('./utils/ordersStreamManager');
+    const positionsManager = require('./utils/positionsStreamManager');
+    
+    const results = {
+      bars: barsManager.cleanupStaleConnections ? barsManager.cleanupStaleConnections() : 0,
+      quotes: quotesManager.cleanupStaleConnections ? quotesManager.cleanupStaleConnections() : 0,
+      orders: ordersManager.cleanupStaleConnections ? ordersManager.cleanupStaleConnections() : 0,
+      positions: positionsManager.cleanupStaleConnections ? positionsManager.cleanupStaleConnections() : 0
+    };
+    
+    const total = results.bars + results.quotes + results.orders + results.positions;
+    
+    res.json({
+      message: `Cleaned up ${total} stale connection(s)`,
+      details: results
+    });
+  } catch (error) {
+    console.error('Error cleaning up stale connections:', error);
+    res.status(500).json({ error: 'Failed to cleanup stale connections', message: error.message });
+  }
 }));
 
 // Auth routes
@@ -241,18 +296,65 @@ app.use((err, req, res, next) => {
   }
 });
 
-// Start the real-time alert checker
-const realtimeAlertChecker = new RealtimeAlertChecker();
-realtimeAlertChecker.start().catch(error => {
-  console.error('Failed to start realtime alert checker:', error);
-});
+// Start the real-time alert checker - DISABLED
+// const realtimeAlertChecker = new RealtimeAlertChecker();
+// realtimeAlertChecker.start().catch(error => {
+//   console.error('Failed to start realtime alert checker:', error);
+// });
 
-app.locals.realtimeAlertChecker = realtimeAlertChecker;
+// app.locals.realtimeAlertChecker = realtimeAlertChecker;
 
 const PORT = process.env.PORT || 3001;
+const http = require('http');
 
-app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+// Create HTTP server explicitly to configure connection handling
+const server = http.createServer(app);
+
+// Configure server for handling many concurrent streaming connections
+server.maxHeadersCount = 0; // Remove header count limit
+server.headersTimeout = 0;   // No timeout for headers (streaming connections)
+server.requestTimeout = 0;   // No timeout for requests (streaming connections)
+server.keepAliveTimeout = 65000; // Keep-alive for 65 seconds
+server.timeout = 0; // No socket timeout (important for long-lived streams)
+
+// Increase max connections (default is based on uLimit, but we want unlimited for streams)
+// This allows many concurrent streaming connections without blocking new requests
+server.maxConnections = 0; // 0 = unlimited (use OS limits)
+
+// Monitor server connection events
+server.on('connection', (socket) => {
+  // Disable Nagle's algorithm for better real-time streaming performance
+  socket.setNoDelay(true);
+  // Keep connections alive
+  socket.setKeepAlive(true, 60000);
+  
+  // Log connection count periodically (not on every connection to avoid spam)
+  if (Math.random() < 0.05) { // Log ~5% of connections
+    console.log(`[Server] Active connections: ${server._connections || 'unknown'}`);
+  }
 });
 
-module.exports = app; 
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+    process.exit(1);
+  } else {
+    console.error('Server error:', error);
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
+  console.log(`Server configured for unlimited streaming connections`);
+  console.log(`- maxConnections: unlimited (0)`);
+  console.log(`- timeout: disabled (0)`);
+  console.log(`- keepAliveTimeout: 65s`);
+  console.log(`\nRequest monitoring enabled:`);
+  console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
+  console.log(`- CLI tool: node scripts/check_server_status.js`);
+  
+  // Periodic monitoring disabled - use debug endpoint instead
+  // startPeriodicMonitoring(60000);
+});
+
+module.exports = { app, server }; 

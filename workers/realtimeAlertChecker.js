@@ -158,8 +158,8 @@ class RealtimeAlertChecker {
         }
       }
       
-      // Print summary for this run
-      console.log(`📊 REALTIME ALERT SUMMARY: Checked ${this.alertsChecked} alerts, Triggered ${this.alertsTriggered} alerts`);
+      // Print summary for this run (only in debug mode)
+      logger.debug(`📊 REALTIME ALERT SUMMARY: Checked ${this.alertsChecked} alerts, Triggered ${this.alertsTriggered} alerts`);
       
     } catch (error) {
       console.error('Error in realtime alert check:', error);
