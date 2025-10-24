@@ -348,9 +348,25 @@ class StreamMultiplexer {
     try {
       const nextKey = this.makeKey(userId, deps);
       const prevKey = this.userToLastKey.get(userId);
+      
+      // Track last switch time to detect rapid reconnections
+      if (!this.userLastSwitch) this.userLastSwitch = new Map();
+      const lastSwitchTime = this.userLastSwitch.get(userId) || 0;
+      const timeSinceLastSwitch = Date.now() - lastSwitchTime;
+      
       if (prevKey && prevKey !== nextKey) {
-        try { this.closeKey(prevKey); } catch (_) {}
+        // Log warning if switching too rapidly (less than 500ms since last switch)
+        if (timeSinceLastSwitch < 500) {
+          console.log(`[${this.name}] ⚠️  User ${userId} rapidly switching streams (${timeSinceLastSwitch}ms since last switch). Consider debouncing on frontend.`);
+        } else {
+          console.log(`[${this.name}] User ${userId} switching from key=${prevKey} to key=${nextKey}, closing old stream...`);
+        }
+        try { await this.closeKey(prevKey); } catch (e) {
+          console.log(`[${this.name}] Error closing previous key=${prevKey}:`, e?.message);
+        }
+        this.userLastSwitch.set(userId, Date.now());
       }
+      
       this.userToLastKey.set(userId, nextKey);
       return await this.addSubscriber(userId, deps, res);
     } catch (error) {
@@ -363,8 +379,9 @@ class StreamMultiplexer {
   /**
    * Force-close a specific upstream by key, ending all subscribers.
    * Safe to call if key does not exist.
+   * Returns a promise that resolves when cleanup is complete.
    */
-  closeKey(key) {
+  async closeKey(key) {
     const state = this.keyToConnection.get(key);
     if (!state) return;
     
@@ -385,6 +402,10 @@ class StreamMultiplexer {
     
     // Resolve cleanup promise to unblock any waiting new connections
     try { resolveCleanup(); } catch (_) {}
+    
+    // Wait a tick to ensure all cleanup events have propagated
+    await new Promise(resolve => setImmediate(resolve));
+    
     this.pendingCleanups.delete(key);
   }
 

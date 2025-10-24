@@ -251,6 +251,9 @@ app.use('/referral', routes.referralRoutes);
 // Contact routes
 app.use('/contact', authenticateToken, routes.contactRoutes);
 
+// Bug reports routes
+app.use('/bug-reports', authenticateToken, routes.bugReportsRoutes);
+
 // Watchlists routes (all require auth within router)
 app.use('/', routes.watchlistsRouter);
 
