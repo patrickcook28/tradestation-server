@@ -58,14 +58,61 @@ function trackRequestStart(req, res, next) {
   req.requestId = requestId;
   
   // Clean up on response finish
-  const cleanup = () => {
+  let cleanupDone = false;
+  let staleCheckInterval = null;
+  
+  const cleanup = (reason) => {
+    if (cleanupDone) return;
+    cleanupDone = true;
+    
+    // Clear stale detection interval if it exists
+    if (staleCheckInterval) {
+      clearInterval(staleCheckInterval);
+      staleCheckInterval = null;
+    }
+    
     activeRequests.delete(requestId);
     activeStreams.delete(requestId);
+    
+    // Log stream cleanup for debugging
+    if (isStreaming) {
+      const duration = Date.now() - startTime;
+      console.log(`[RequestMonitor] Stream ${requestId} ended (${reason}) after ${duration}ms: ${url}`);
+    }
   };
   
-  res.on('finish', cleanup);
-  res.on('close', cleanup);
-  res.on('error', cleanup);
+  // Listen to multiple events to ensure cleanup
+  res.on('finish', () => cleanup('finish'));
+  res.on('close', () => cleanup('close'));
+  res.on('error', (err) => cleanup('error'));
+  
+  // CRITICAL: Also listen for request being aborted/closed
+  // This catches cases where the client aborts but the response events don't fire
+  if (req) {
+    req.on('close', () => {
+      if (!res.writableEnded && !res.finished) {
+        cleanup('req-close');
+      }
+    });
+    req.on('aborted', () => {
+      if (!res.writableEnded && !res.finished) {
+        cleanup('req-aborted');
+      }
+    });
+  }
+  
+  // For streaming endpoints, add stale detection (defensive check every 60 seconds)
+  if (isStreaming) {
+    staleCheckInterval = setInterval(() => {
+      const age = Date.now() - startTime;
+      const isStale = res.writableEnded || res.finished || req.destroyed || req.aborted;
+      
+      if (isStale && activeStreams.has(requestId)) {
+        console.log(`[RequestMonitor] ⚠️ Detected stale stream ${requestId} (age: ${age}ms): ${url}`);
+        cleanup('stale-detection');
+      }
+    }, 60000);
+  }
   
   next();
 }

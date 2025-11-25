@@ -2,6 +2,12 @@
 
 This Node.js/Express server provides a complete trade alert system with standard deviation analysis for futures contracts.
 
+---
+
+**Important Disclosure:** PrecisionTrader is not affiliated or associated with, or a partner of, or an agent, representative, delegate, associated person or introducing broker for, any TradeStation company. The products and services offered by PrecisionTrader are not sponsored, endorsed, sold or promoted by any TradeStation company, and TradeStation makes no representation regarding any products or services offered by PrecisionTrader. Equities, equity options and commodity futures products and services are offered by TradeStation Securities, Inc. (Member NYSE, FINRA, CME and SIPC).
+
+---
+
 ## Features
 
 - **Trade Alerts**: Create, update, and delete price-based alerts
@@ -144,7 +150,7 @@ ZOHO_SMTP_USER=your-zoho-email@example.com
 ZOHO_SMTP_PASS=your-zoho-app-password
 
 # From address for emails
-EMAIL_FROM=support@tradecraftapp.com
+EMAIL_FROM=support@precisiontrader.tech
 ```
 
 Notes:
@@ -167,7 +173,7 @@ npm run migrate
 
 ## Email Branding
 
-- Emails are sent from `support@tradecraftapp.com`.
+- Emails are sent from `support@precisiontrader.tech`.
 - The reset email uses a simple dark theme and pulls the logo from `${APP_BASE_URL}/images/tradestation-logo.png`.
 
 ## Frontend Routes

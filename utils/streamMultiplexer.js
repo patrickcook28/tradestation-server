@@ -173,6 +173,23 @@ class StreamMultiplexer {
         for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
         state.subscribers.clear();
         try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
+        
+        // CRITICAL: Aggressively destroy the upstream connection and socket
+        try {
+          if (state.readable) {
+            if (state.readable.destroy) state.readable.destroy();
+            if (state.readable.close) state.readable.close();
+          }
+        } catch (_) {}
+        
+        // Also destroy the response body if different from readable
+        try {
+          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
+            if (state.upstream.body.destroy) state.upstream.body.destroy();
+            if (state.upstream.body.close) state.upstream.body.close();
+          }
+        } catch (_) {}
+        
         this.keyToConnection.delete(key);
         console.log(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
       } catch (cleanupError) {
@@ -190,8 +207,8 @@ class StreamMultiplexer {
   async addSubscriber(userId, deps, res) {
     const key = this.makeKey(userId, deps);
     
-    // Extract stream epoch from request headers for connection tracking
-    const streamEpoch = res.req?.headers?.['x-stream-epoch'] || 'unknown';
+    // Extract stream epoch from query params for connection tracking
+    const streamEpoch = res.req?.query?._epoch || res.req?.headers?.['x-stream-epoch'] || '0';
     const connectionId = `${userId}|${key}|${streamEpoch}|${Date.now()}`;
     
     let state;
@@ -255,11 +272,21 @@ class StreamMultiplexer {
         const now = new Date().toISOString();
         console.log(`[${this.name}] [${now}] 🧹 Closing upstream (no subscribers) for key=${key}`);
         try { 
-          if (state.readable && state.readable.destroy) {
-            state.readable.destroy();
+          // Aggressively destroy all streams and underlying connections
+          if (state.readable) {
+            if (state.readable.destroy) state.readable.destroy();
+            if (state.readable.close) state.readable.close();
+            // Destroy the underlying socket if accessible
+            if (state.readable.socket && state.readable.socket.destroy) {
+              state.readable.socket.destroy();
+            }
           }
           if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
-            state.upstream.body.destroy();
+            if (state.upstream.body.destroy) state.upstream.body.destroy();
+            if (state.upstream.body.close) state.upstream.body.close();
+            if (state.upstream.body.socket && state.upstream.body.socket.destroy) {
+              state.upstream.body.socket.destroy();
+            }
           }
         } catch (err) {
           console.error(`[${this.name}] Error destroying upstream for key=${key}:`, err.message);
@@ -442,6 +469,8 @@ class StreamMultiplexer {
    */
   cleanupStaleConnections() {
     let removed = 0;
+    let upstreamsDestroyed = 0;
+    
     for (const [key, state] of this.keyToConnection.entries()) {
       const stale = [];
       for (const res of state.subscribers) {
@@ -462,17 +491,67 @@ class StreamMultiplexer {
       if (state.subscribers.size === 0 && stale.length > 0) {
         console.log(`[${this.name}] 🧹 No subscribers remaining after stale cleanup, closing upstream for key=${key}`);
         try {
-          if (state.readable && state.readable.destroy) state.readable.destroy();
+          if (state.readable) {
+            if (state.readable.destroy) state.readable.destroy();
+            if (state.readable.close) state.readable.close();
+          }
+          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
+            if (state.upstream.body.destroy) state.upstream.body.destroy();
+            if (state.upstream.body.close) state.upstream.body.close();
+          }
         } catch (_) {}
         this.keyToConnection.delete(key);
+        upstreamsDestroyed++;
       }
     }
     
-    if (removed > 0) {
-      console.log(`[${this.name}] 🧹 Cleaned up ${removed} stale connection(s). Active upstreams: ${this.keyToConnection.size}`);
+    if (removed > 0 || upstreamsDestroyed > 0) {
+      console.log(`[${this.name}] 🧹 Cleaned up ${removed} stale connection(s) and ${upstreamsDestroyed} orphaned upstream(s). Active upstreams: ${this.keyToConnection.size}`);
     }
     
     return removed;
+  }
+
+  /**
+   * Start periodic cleanup of stale connections (every 60 seconds)
+   * This helps recover from any connection tracking issues automatically
+   */
+  startPeriodicCleanup(intervalMs = 60000) {
+    if (this._cleanupInterval) {
+      return; // Already started
+    }
+    
+    console.log(`[${this.name}] Starting periodic stale connection cleanup (every ${intervalMs}ms)`);
+    
+    this._cleanupInterval = setInterval(() => {
+      try {
+        const removed = this.cleanupStaleConnections();
+        
+        // Log warning if we have too many active upstreams
+        const upstreamCount = this.keyToConnection.size;
+        if (upstreamCount > 20) {
+          console.log(`[${this.name}] ⚠️  HIGH UPSTREAM COUNT: ${upstreamCount} active upstreams. This may indicate a leak.`);
+        }
+      } catch (err) {
+        console.error(`[${this.name}] Error during periodic cleanup:`, err);
+      }
+    }, intervalMs);
+    
+    // Don't prevent Node.js from exiting
+    if (this._cleanupInterval.unref) {
+      this._cleanupInterval.unref();
+    }
+  }
+
+  /**
+   * Stop periodic cleanup
+   */
+  stopPeriodicCleanup() {
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+      console.log(`[${this.name}] Stopped periodic cleanup`);
+    }
   }
 }
 

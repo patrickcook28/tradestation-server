@@ -52,10 +52,106 @@ function getFetchOptionsWithAgent(url, options = {}, timeoutMs = 30000) {
   };
 }
 
+/**
+ * Force destroy all idle sockets in the free socket pool
+ * This is useful for cleaning up after stream leaks
+ * @returns {number} Number of sockets destroyed
+ */
+function destroyIdleSockets() {
+  let destroyed = 0;
+  
+  // Destroy idle HTTP sockets
+  if (httpAgent.freeSockets) {
+    for (const [host, sockets] of Object.entries(httpAgent.freeSockets)) {
+      for (const socket of sockets) {
+        try {
+          socket.destroy();
+          destroyed++;
+        } catch (_) {}
+      }
+    }
+  }
+  
+  // Destroy idle HTTPS sockets
+  if (httpsAgent.freeSockets) {
+    for (const [host, sockets] of Object.entries(httpsAgent.freeSockets)) {
+      for (const socket of sockets) {
+        try {
+          socket.destroy();
+          destroyed++;
+        } catch (_) {}
+      }
+    }
+  }
+  
+  if (destroyed > 0) {
+    console.log(`[HttpAgent] Destroyed ${destroyed} idle socket(s)`);
+  }
+  
+  return destroyed;
+}
+
+/**
+ * Get socket statistics for debugging
+ * @returns {object} Socket statistics
+ */
+function getSocketStats() {
+  const stats = {
+    http: {
+      activeSockets: 0,
+      freeSockets: 0,
+      pendingRequests: 0,
+    },
+    https: {
+      activeSockets: 0,
+      freeSockets: 0,
+      pendingRequests: 0,
+    },
+  };
+  
+  // Count HTTP sockets
+  if (httpAgent.sockets) {
+    for (const sockets of Object.values(httpAgent.sockets)) {
+      stats.http.activeSockets += Array.isArray(sockets) ? sockets.length : 0;
+    }
+  }
+  if (httpAgent.freeSockets) {
+    for (const sockets of Object.values(httpAgent.freeSockets)) {
+      stats.http.freeSockets += Array.isArray(sockets) ? sockets.length : 0;
+    }
+  }
+  if (httpAgent.requests) {
+    for (const requests of Object.values(httpAgent.requests)) {
+      stats.http.pendingRequests += Array.isArray(requests) ? requests.length : 0;
+    }
+  }
+  
+  // Count HTTPS sockets
+  if (httpsAgent.sockets) {
+    for (const sockets of Object.values(httpsAgent.sockets)) {
+      stats.https.activeSockets += Array.isArray(sockets) ? sockets.length : 0;
+    }
+  }
+  if (httpsAgent.freeSockets) {
+    for (const sockets of Object.values(httpsAgent.freeSockets)) {
+      stats.https.freeSockets += Array.isArray(sockets) ? sockets.length : 0;
+    }
+  }
+  if (httpsAgent.requests) {
+    for (const requests of Object.values(httpsAgent.requests)) {
+      stats.https.pendingRequests += Array.isArray(requests) ? requests.length : 0;
+    }
+  }
+  
+  return stats;
+}
+
 module.exports = {
   httpAgent,
   httpsAgent,
   getAgentForUrl,
   getFetchOptionsWithAgent,
+  destroyIdleSockets,
+  getSocketStats,
 };
 

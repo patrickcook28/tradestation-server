@@ -4,14 +4,23 @@ const { authenticateToken } = require('./auth');
 const { getFetchOptionsWithAgent } = require('../utils/httpAgent');
 
 // Allowed indicator functions for v1
-const ALLOWED_FUNCTIONS = new Set(['SMA', 'EMA', 'VWAP', 'BBANDS']);
+const ALLOWED_FUNCTIONS = new Set(['SMA', 'EMA', 'VWAP', 'BBANDS', 'RSI', 'WMA', 'DEMA', 'TEMA', 'SAR', 'MACD', 'STOCH', 'CCI', 'ADX']);
 
 // Whitelisted params per function (lowercased keys as in Alpha Vantage)
 const PARAM_WHITELIST = {
   SMA: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
   EMA: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
+  WMA: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
+  DEMA: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
+  TEMA: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
   VWAP: ['function', 'symbol', 'interval', 'apikey'],
   BBANDS: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'nbdevup', 'nbdevdn', 'ma_type', 'apikey'],
+  SAR: ['function', 'symbol', 'interval', 'acceleration', 'maximum', 'apikey'],
+  RSI: ['function', 'symbol', 'interval', 'series_type', 'time_period', 'apikey'],
+  MACD: ['function', 'symbol', 'interval', 'series_type', 'fastperiod', 'slowperiod', 'signalperiod', 'apikey'],
+  STOCH: ['function', 'symbol', 'interval', 'fastkperiod', 'slowkperiod', 'slowdperiod', 'slowkmatype', 'slowdmatype', 'apikey'],
+  CCI: ['function', 'symbol', 'interval', 'time_period', 'apikey'],
+  ADX: ['function', 'symbol', 'interval', 'time_period', 'apikey'],
 };
 
 // Interval-based TTL mapping

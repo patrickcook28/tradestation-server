@@ -60,9 +60,12 @@ const register = async (req, res) => {
             }
         }
 
+        // Capture legal acceptance timestamp
+        const acceptanceTimestamp = new Date();
+
         pool.query(
-            'INSERT INTO users (email, password, beta_user, referral_code) VALUES ($1, $2, $3, $4) RETURNING *',
-            [email, hashedPassword, beta_user, final_referral_code], 
+            'INSERT INTO users (email, password, beta_user, referral_code, tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [email, hashedPassword, beta_user, final_referral_code, acceptanceTimestamp, acceptanceTimestamp, acceptanceTimestamp], 
             async (error, result) => {
                 if(error) {
                     console.error('Database error during user creation:', error);
@@ -310,6 +313,7 @@ const getUserSettings = async (req, res) => {
                     max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
                     trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
                     app_settings, account_defaults, cost_basis_data,
+                    tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
              FROM users WHERE id = $1`,
             [userId]
@@ -391,7 +395,12 @@ const getUserSettings = async (req, res) => {
             subscriptionStatus: subscriptionStatus,
             costBasisData: user.cost_basis_data || {},
             maintenanceStatus: maintenanceStatus,
-            tickerOptions: { success: true, suggestions: tickerOptions }
+            tickerOptions: { success: true, suggestions: tickerOptions },
+            legalAcceptance: {
+                tosAcceptedAt: user.tos_accepted_at,
+                privacyPolicyAcceptedAt: user.privacy_policy_accepted_at,
+                riskDisclosureAcceptedAt: user.risk_disclosure_accepted_at
+            }
         });
     } catch (error) {
         logger.error('Error getting user settings:', error);

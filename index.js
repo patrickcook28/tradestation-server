@@ -166,6 +166,9 @@ app.post('/debug/streams/cleanup', asyncHandler(async (req, res) => {
     const quotesManager = require('./utils/quoteStreamManager');
     const ordersManager = require('./utils/ordersStreamManager');
     const positionsManager = require('./utils/positionsStreamManager');
+    const { destroyIdleSockets } = require('./utils/httpAgent');
+    
+    console.log('[Debug] Starting manual stream cleanup...');
     
     const results = {
       bars: barsManager.cleanupStaleConnections ? barsManager.cleanupStaleConnections() : 0,
@@ -174,10 +177,16 @@ app.post('/debug/streams/cleanup', asyncHandler(async (req, res) => {
       positions: positionsManager.cleanupStaleConnections ? positionsManager.cleanupStaleConnections() : 0
     };
     
+    // Also destroy idle sockets to free up resources
+    const socketsDestroyed = destroyIdleSockets();
+    results.idleSocketsDestroyed = socketsDestroyed;
+    
     const total = results.bars + results.quotes + results.orders + results.positions;
     
+    console.log(`[Debug] Cleanup complete: ${total} stale connections, ${socketsDestroyed} idle sockets`);
+    
     res.json({
-      message: `Cleaned up ${total} stale connection(s)`,
+      message: `Cleaned up ${total} stale connection(s) and ${socketsDestroyed} idle socket(s)`,
       details: results
     });
   } catch (error) {
@@ -344,6 +353,19 @@ server.listen(PORT, () => {
   
   // Periodic monitoring disabled - use debug endpoint instead
   // startPeriodicMonitoring(60000);
+  
+  // Periodic idle socket cleanup to prevent accumulation (every 5 minutes)
+  const { destroyIdleSockets } = require('./utils/httpAgent');
+  setInterval(() => {
+    try {
+      const destroyed = destroyIdleSockets();
+      if (destroyed > 0) {
+        console.log(`[Maintenance] Cleaned up ${destroyed} idle socket(s)`);
+      }
+    } catch (err) {
+      console.error('[Maintenance] Error during idle socket cleanup:', err);
+    }
+  }, 300000); // Every 5 minutes
 });
 
 // Export app for Vercel serverless functions
