@@ -1,0 +1,46 @@
+# Local Development Caddyfile for HTTP/2 Support
+# This enables HTTP/2 to avoid browser's 6-connection limit
+# 
+# Usage:
+#   1. Start backend on port 5000: cd tradestation-server && PORT=5000 npm start
+#   2. Start frontend: cd react_ui.nosync && npm run dev (runs on :3002)
+#   3. Start Caddy: caddy run --config Caddyfile.local
+#   4. Access app at: https://localhost:3000
+#   5. Set REACT_APP_BACKEND_URL=https://localhost:3001 in react_ui.nosync/.env.local
+#
+# Note: Accept the self-signed certificate warning in your browser
+# The backend runs on 5000 internally, but Caddy exposes it on 3001 with HTTP/2
+
+{
+    # Enable HTTP/2 (default in Caddy 2, but explicit)
+    servers {
+        protocols h1 h2 h2c
+    }
+}
+
+# Backend API proxy (Node server on 5000 -> Caddy HTTPS on 3001 with HTTP/2)
+# This keeps port 3001 for the frontend to connect to, but adds HTTP/2 support
+https://localhost:3001 {
+    reverse_proxy localhost:5000 {
+        transport http {
+            keepalive 60s
+        }
+    }
+    tls internal
+}
+
+# Frontend proxy (React dev server on 3002 -> Caddy HTTPS on 3000)
+https://localhost:3000 {
+    reverse_proxy localhost:3002 {
+        transport http {
+            keepalive 60s
+        }
+    }
+    tls internal
+}
+
+# HTTP redirect to HTTPS (optional convenience)
+http://localhost:8080 {
+    redir https://localhost:3000{uri}
+}
+

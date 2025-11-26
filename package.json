@@ -6,7 +6,9 @@
   "scripts": {
     "test": "node tests/run_tests.js",
     "start": "node index.js",
+    "start:caddy": "PORT=5000 node index.js",
     "server": "nodemon index.js",
+    "server:caddy": "PORT=5000 nodemon index.js",
     "migrate": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
     "migrate:create": "node-pg-migrate create"

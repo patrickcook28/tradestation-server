@@ -51,7 +51,18 @@ const pusher = new Pusher({
 
 const app = express();
 
-app.use(cors());
+// CORS configuration - allow HTTPS localhost origins for local development with Caddy
+app.use(cors({
+  origin: [
+    'https://localhost:3000',
+    'http://localhost:3002',
+    'http://localhost:3000',
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 setupStripeWebhook(app);
 
@@ -288,8 +299,7 @@ app.use('/billing', billingRoutes);
 Sentry.setupExpressErrorHandler(app);
 
 // Central error handler (final)
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   try { captureException(err, { path: req.originalUrl, method: req.method }); } catch (_) {}
   const status = err.status || 500;
   const payload = err.response || { error: err.message || 'Internal server error' };
