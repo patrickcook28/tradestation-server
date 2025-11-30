@@ -51,17 +51,14 @@ const pusher = new Pusher({
 
 const app = express();
 
-// CORS configuration - allow HTTPS localhost origins for local development with Caddy
+// CORS configuration - allow all origins
 app.use(cors({
-  origin: [
-    'https://localhost:3000',
-    'http://localhost:3002',
-    'http://localhost:3000',
-    process.env.FRONTEND_URL
-  ].filter(Boolean),
+  origin: true, // Allow all origins
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // Cache preflight requests for 24 hours
 }));
 
 setupStripeWebhook(app);
