@@ -131,9 +131,25 @@ app.use((req, res, next) => {
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
 
-// Simple health check for Railway/container orchestration (responds immediately)
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+// Health check for Railway - includes database connectivity check
+app.get('/health', async (req, res) => {
+  try {
+    // Quick DB check (SELECT 1 is fast)
+    await pool.query('SELECT 1');
+    res.status(200).json({ 
+      status: 'ok', 
+      db: 'connected',
+      timestamp: Date.now() 
+    });
+  } catch (err) {
+    console.error('[Health] Database check failed:', err.message);
+    res.status(503).json({ 
+      status: 'unhealthy', 
+      db: 'disconnected',
+      error: err.message,
+      timestamp: Date.now() 
+    });
+  }
 });
 
 app.get('/status', asyncHandler(async (req, res) => {
@@ -356,29 +372,11 @@ app.use((err, req, res, _next) => {
 // app.locals.realtimeAlertChecker = realtimeAlertChecker;
 
 const PORT = process.env.PORT || 3001;
-console.log(`[Startup] PORT env var: ${process.env.PORT}, using port: ${PORT}`);
 
-// SIMPLIFIED FOR RAILWAY - using app.listen() instead of custom http.createServer
-// The custom server config was for advanced streaming, can re-enable after Railway works
 const server = app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`Server started on port ${PORT} (0.0.0.0)`);
+  console.log(`Server started on port ${PORT}`);
   
-  // Test database connection on startup
-  console.log('[Startup] Testing database connection...');
-  console.log('[Startup] DATABASE_URL exists:', !!process.env.DATABASE_URL);
-  try {
-    const dbResult = await pool.query('SELECT NOW() as time, current_database() as db');
-    console.log('[Startup] ✅ Database connected! DB:', dbResult.rows[0].db);
-  } catch (dbErr) {
-    console.error('[Startup] ❌ Database connection failed:', dbErr.message);
-  }
-  console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
-  console.log(`- Background streams: http://localhost:${PORT}/debug/background-streams`);
-  
-  // Periodic monitoring disabled - use debug endpoint instead
-  // startPeriodicMonitoring(60000);
-  
-  // Periodic idle socket cleanup to prevent accumulation (every 5 minutes)
+  // Periodic idle socket cleanup (every 5 minutes)
   const { destroyIdleSockets } = require('./utils/httpAgent');
   setInterval(() => {
     try {
@@ -389,30 +387,20 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     } catch (err) {
       console.error('[Maintenance] Error during idle socket cleanup:', err);
     }
-  }, 300000); // Every 5 minutes
+  }, 300000);
   
-  // Auto-start background streams if enabled via environment variable
-  // Set ENABLE_BACKGROUND_STREAMS=true to enable
-  // IMPORTANT: Defer initialization to allow health checks to pass first
+  // Auto-start background streams if enabled
   if (process.env.ENABLE_BACKGROUND_STREAMS === 'true') {
-    console.log('[BackgroundStreams] Will start in 5 seconds (allowing health checks to pass)...');
-    setTimeout(async () => {
-      console.log('[BackgroundStreams] Auto-starting background stream manager...');
-      try {
-        // Start alert engine first (it subscribes to stream data events)
-        await alertEngine.start();
-        console.log('[AlertEngine] Successfully started');
-        
-        // Then start background streams (they emit data events)
-        await backgroundStreamManager.initializeFromDatabase();
-        console.log('[BackgroundStreams] Successfully initialized');
-      } catch (err) {
-        console.error('[BackgroundStreams] Failed to initialize:', err.message);
-        // Don't crash the server, just log the error
-      }
-    }, 5000); // Wait 5 seconds for health checks to pass
-  } else {
-    console.log('[BackgroundStreams] Disabled. Set ENABLE_BACKGROUND_STREAMS=true to enable.');
+    console.log('[BackgroundStreams] Starting...');
+    try {
+      await alertEngine.start();
+      console.log('[AlertEngine] Started');
+      
+      await backgroundStreamManager.initializeFromDatabase();
+      console.log('[BackgroundStreams] Initialized');
+    } catch (err) {
+      console.error('[BackgroundStreams] Failed to initialize:', err.message);
+    }
   }
 });
 
