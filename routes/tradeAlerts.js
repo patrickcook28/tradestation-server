@@ -5,6 +5,15 @@ const logger = require('../config/logging');
 const { roundStdDevLevels, roundToTickSize, roundToTwoDecimals } = require('../utils/tickSizeUtils');
 const { refreshAccessTokenForUser } = require('./tradestation');
 
+// Get alert engine for real-time updates (lazy load to avoid circular deps)
+const getAlertEngine = () => {
+  try {
+    return require('../workers/alertEngine');
+  } catch (e) {
+    return null;
+  }
+};
+
 // Helper function to transform ticker to current contract if needed
 const transformTickerToCurrentContract = (ticker) => {
   // Common futures products that need contract transformation
@@ -104,10 +113,17 @@ const createTradeAlert = async (req, res) => {
     const values = [req.user.id, transformedTicker, alert_type, finalPriceLevel, std_dev_level || null, timeframe || null];
     
     const result = await pool.query(query, values);
+    const newAlert = result.rows[0];
+    
+    // Notify AlertEngine of new alert (real-time update)
+    const alertEngine = getAlertEngine();
+    if (alertEngine && alertEngine.isRunning) {
+      alertEngine.addOrUpdateAlert(newAlert);
+    }
     
     res.json({
       success: true,
-      alert: result.rows[0]
+      alert: newAlert
     });
     
   } catch (error) {
@@ -355,9 +371,14 @@ const updateTradeAlert = async (req, res) => {
       finalPriceLevel = roundToTwoDecimals(roundToTickSize(parseFloat(price_level), transformedTicker));
     }
     
+    // If re-enabling alert (is_active = true), clear triggered_at
+    const clearTriggeredAt = is_active === true;
+    
     const query = `
       UPDATE trade_alerts 
-      SET ticker = $1, alert_type = $2, price_level = $3, std_dev_level = $4, timeframe = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP 
+      SET ticker = $1, alert_type = $2, price_level = $3, std_dev_level = $4, timeframe = $5, is_active = $6, 
+          triggered_at = ${clearTriggeredAt ? 'NULL' : 'triggered_at'},
+          updated_at = CURRENT_TIMESTAMP 
       WHERE id = $7 AND user_id = $8 
       RETURNING *
     `;
@@ -368,12 +389,20 @@ const updateTradeAlert = async (req, res) => {
       return res.status(404).json({ error: 'Trade alert not found' });
     }
     
-    // Refresh the real-time alert checker with the updated alert
+    const updatedAlert = result.rows[0];
+    
+    // Notify AlertEngine of updated alert (real-time update)
+    const alertEngine = getAlertEngine();
+    if (alertEngine && alertEngine.isRunning) {
+      alertEngine.addOrUpdateAlert(updatedAlert);
+    }
+    
+    // Legacy: Refresh the old alert checker if still in use
     if (req.app.locals.realtimeAlertChecker) {
       await req.app.locals.realtimeAlertChecker.refreshAlerts();
     }
     
-    res.json(result.rows[0]);
+    res.json(updatedAlert);
   } catch (error) {
     logger.error('Error updating trade alert:', error);
     res.status(500).json({ error: 'Failed to update trade alert' });
@@ -385,11 +414,21 @@ const deleteTradeAlert = async (req, res) => {
   try {
     const { id } = req.params;
     
+    // First get the alert so we can remove it from AlertEngine
+    const getQuery = 'SELECT * FROM trade_alerts WHERE id = $1 AND user_id = $2';
+    const getResult = await pool.query(getQuery, [id, req.user.id]);
+    
+    if (getResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Trade alert not found' });
+    }
+    
     const query = 'DELETE FROM trade_alerts WHERE id = $1 AND user_id = $2 RETURNING *';
     const result = await pool.query(query, [id, req.user.id]);
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Trade alert not found' });
+    // Notify AlertEngine to remove alert (real-time update)
+    const alertEngine = getAlertEngine();
+    if (alertEngine && alertEngine.isRunning) {
+      alertEngine.removeAlert(parseInt(id));
     }
     
     res.json({ message: 'Trade alert deleted successfully' });

@@ -10,19 +10,37 @@ const FUTURES_MONTHS = [
 ];
 
 /**
- * Get the next contract month for a given date
+ * Get the current active contract month for a given date
+ * Futures contracts typically expire on the third Friday of the contract month.
+ * We roll to the next contract around mid-month (15th) to avoid expiration issues.
  * @param {Date} date - The reference date
  * @returns {Object} - { monthCode, year, monthName }
  */
 function getNextContractMonth(date = new Date()) {
   const currentMonth = date.getMonth();
   const currentYear = date.getFullYear();
+  const currentDay = date.getDate();
   
-  // Find the next contract month
+  // Check if current month is a contract month
+  const currentMonthContract = FUTURES_MONTHS.find(m => m.month === currentMonth);
+  
+  if (currentMonthContract) {
+    // If we're in a contract month and before the 15th, use this month's contract
+    // Most index futures expire on the third Friday (~15th-21st)
+    if (currentDay < 15) {
+      return {
+        monthCode: currentMonthContract.code,
+        year: currentYear,
+        monthName: currentMonthContract.name
+      };
+    }
+  }
+  
+  // Find the next contract month (first month > current)
   let contract = FUTURES_MONTHS.find(m => m.month > currentMonth);
   
   if (!contract) {
-    // If no contract found, use next year's first month
+    // If no contract found in current year, use next year's first month
     contract = FUTURES_MONTHS[0];
     return {
       monthCode: contract.code,

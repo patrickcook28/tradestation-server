@@ -311,7 +311,7 @@ const getUserSettings = async (req, res) => {
         const result = await pool.query(
             `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
                     max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
-                    trade_confirmation, show_tooltips, superuser, beta_user, referral_code,
+                    trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code,
                     app_settings, account_defaults, cost_basis_data,
                     tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
@@ -386,6 +386,7 @@ const getUserSettings = async (req, res) => {
         return res.json({
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
+            emailAlertsEnabled: user.email_alerts_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,
@@ -421,6 +422,7 @@ const updateUserSettings = async (req, res) => {
             maxLossPerTradeLockExpiresAt,
             tradeConfirmation,
             showTooltips,
+            emailAlertsEnabled,
             appSettings, // JSON object of global user settings (e.g., showStdDevLines, showLiquidity, showOrders, sessionTemplate)
             accountDefaults, // JSON object keyed by accountId with risk/riskPercentage etc.
         } = req.body;
@@ -435,11 +437,12 @@ const updateUserSettings = async (req, res) => {
                 max_loss_per_trade_lock_expires_at = COALESCE($6, max_loss_per_trade_lock_expires_at),
                 trade_confirmation = COALESCE($7, trade_confirmation),
                 show_tooltips = COALESCE($8, show_tooltips),
-                app_settings = COALESCE($9::jsonb, app_settings),
-                account_defaults = COALESCE($10::jsonb, account_defaults)
-            WHERE id = $11
-            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_day_lock_expires_at, max_loss_per_trade, max_loss_per_trade_enabled, max_loss_per_trade_lock_expires_at, trade_confirmation, show_tooltips, superuser, beta_user, referral_code, app_settings, account_defaults`,
-            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerDayLockExpiresAt, maxLossPerTrade, maxLossPerTradeEnabled, maxLossPerTradeLockExpiresAt, tradeConfirmation, showTooltips, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
+                email_alerts_enabled = COALESCE($9, email_alerts_enabled),
+                app_settings = COALESCE($10::jsonb, app_settings),
+                account_defaults = COALESCE($11::jsonb, account_defaults)
+            WHERE id = $12
+            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_day_lock_expires_at, max_loss_per_trade, max_loss_per_trade_enabled, max_loss_per_trade_lock_expires_at, trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code, app_settings, account_defaults`,
+            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerDayLockExpiresAt, maxLossPerTrade, maxLossPerTradeEnabled, maxLossPerTradeLockExpiresAt, tradeConfirmation, showTooltips, emailAlertsEnabled, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
         );
 
         if (result.rows.length === 0) {
@@ -456,6 +459,7 @@ const updateUserSettings = async (req, res) => {
             maxLossPerTradeLockExpiresAt: user.max_loss_per_trade_lock_expires_at,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
+            emailAlertsEnabled: user.email_alerts_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,

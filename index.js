@@ -12,6 +12,8 @@ const { captureException, captureMessage } = require('./utils/errorReporting');
 const Sentry = require('@sentry/node');
 const Pusher = require("pusher");
 const RealtimeAlertChecker = require('./workers/realtimeAlertChecker');
+const backgroundStreamManager = require('./utils/backgroundStreamManager');
+const alertEngine = require('./workers/alertEngine');
 const logger = require('./config/logging');
 const fs = require('fs');
 const hbs = require('hbs');
@@ -42,12 +44,16 @@ process.on('uncaughtException', (error) => {
 });
 
 const pusher = new Pusher({
-  appId: "1800665",
-  key: "ba14eb35edcc14c65a59",
-  secret: "5db5eb33846b125fb196",
-  cluster: "us3",
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  secret: process.env.PUSHER_SECRET,
+  cluster: process.env.PUSHER_CLUSTER,
   useTLS: true
 });
+
+if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
+  console.warn('[Server] Missing Pusher environment variables (PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, PUSHER_CLUSTER)');
+}
 
 const app = express();
 
@@ -203,6 +209,31 @@ app.post('/debug/streams/cleanup', asyncHandler(async (req, res) => {
   }
 }));
 
+// ===============================
+// Background Stream Manager Status (for Admin UI)
+// ===============================
+
+app.get('/debug/background-streams', asyncHandler(async (req, res) => {
+  try {
+    const status = backgroundStreamManager.getStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Error getting background stream status:', error);
+    res.status(500).json({ error: 'Failed to get status', message: error.message });
+  }
+}));
+
+// Alert engine stats endpoint
+app.get('/debug/alert-engine', asyncHandler(async (req, res) => {
+  try {
+    const stats = alertEngine.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('Error getting alert engine stats:', error);
+    res.status(500).json({ error: 'Failed to get stats', message: error.message });
+  }
+}));
+
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));
 app.post("/auth/login", asyncHandler(routes.authRoutes.login));
@@ -281,6 +312,10 @@ app.use('/', routes.tradeJournalsRouter);
 const analyticsRoutes = require('./routes/analytics');
 app.use('/analytics', analyticsRoutes);
 
+// Loss limits routes (loss limit locks and alerts)
+const lossLimitsRoutes = require('./routes/lossLimits');
+app.use('/loss_limits', lossLimitsRoutes);
+
 // Indicators proxy route (pass-through Alpha Vantage) and admin cache info
 app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
 app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));
@@ -354,9 +389,10 @@ server.on('error', (error) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server started on port ${PORT}`);
   console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
+  console.log(`- Background streams: http://localhost:${PORT}/debug/background-streams`);
   
   // Periodic monitoring disabled - use debug endpoint instead
   // startPeriodicMonitoring(60000);
@@ -373,6 +409,26 @@ server.listen(PORT, () => {
       console.error('[Maintenance] Error during idle socket cleanup:', err);
     }
   }, 300000); // Every 5 minutes
+  
+  // Auto-start background streams if enabled via environment variable
+  // Set ENABLE_BACKGROUND_STREAMS=true to enable
+  if (process.env.ENABLE_BACKGROUND_STREAMS === 'true') {
+    console.log('[BackgroundStreams] Auto-starting background stream manager...');
+    try {
+      // Start alert engine first (it subscribes to stream data events)
+      await alertEngine.start();
+      console.log('[AlertEngine] Successfully started');
+      
+      // Then start background streams (they emit data events)
+      await backgroundStreamManager.initializeFromDatabase();
+      console.log('[BackgroundStreams] Successfully initialized');
+    } catch (err) {
+      console.error('[BackgroundStreams] Failed to initialize:', err.message);
+      // Don't crash the server, just log the error
+    }
+  } else {
+    console.log('[BackgroundStreams] Disabled. Set ENABLE_BACKGROUND_STREAMS=true to enable.');
+  }
 });
 
 // Export app for Vercel serverless functions

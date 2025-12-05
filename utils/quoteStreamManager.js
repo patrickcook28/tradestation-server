@@ -12,6 +12,12 @@ const mux = new StreamMultiplexer({
   buildRequest: (userId, symbolsCsv) => ({ path: `/marketdata/stream/quotes/${normalizeSymbolsCsv(symbolsCsv)}`, paperTrading: false })
 });
 
-module.exports = { ...mux, addSubscriber: mux.addExclusiveSubscriber.bind(mux) };
+module.exports = { 
+  ...mux, 
+  // Default for HTTP clients - exclusive (one stream per user)
+  addSubscriber: mux.addExclusiveSubscriber.bind(mux),
+  // For background streams - non-exclusive (can coexist with user streams)
+  addBackgroundSubscriber: mux.addSubscriber.bind(mux)
+};
 
 

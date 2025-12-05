@@ -23,6 +23,12 @@ const addSubscriber = async (userId, deps, res) => {
   return mux.addExclusiveSubscriber(userId, deps, res);
 };
 
-module.exports = { ...mux, addSubscriber };
+// For background streams - non-exclusive, simpler setup
+const addBackgroundSubscriber = async (userId, deps, res) => {
+  try { console.log(`[Positions] addBackgroundSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
+  return mux.addSubscriber(userId, deps, res);
+};
+
+module.exports = { ...mux, addSubscriber, addBackgroundSubscriber };
 
 

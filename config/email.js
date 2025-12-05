@@ -351,13 +351,93 @@ The PrecisionTrader Team
   return { from, to, subject: emailSubject, text, html };
 }
 
+/**
+ * Build price alert notification email
+ */
+function buildPriceAlertEmail({ to, ticker, alertType, priceLevel, triggeredAt, description }) {
+  const from = process.env.EMAIL_FROM || 'alerts@precisiontrader.tech';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://app.tradecraft.app';
+  const direction = alertType === 'above' || alertType === 'cross_above' ? 'crossed above' : 'crossed below';
+  const emailSubject = `🚨 Price Alert: ${ticker} ${direction} $${parseFloat(priceLevel).toFixed(2)}`;
+  
+  const formattedTime = new Date(triggeredAt).toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  });
+
+  const text = `
+Price Alert Triggered!
+
+${ticker} ${direction} your target price of $${parseFloat(priceLevel).toFixed(2)}
+
+Triggered At: ${formattedTime}
+${description ? `Note: ${description}` : ''}
+
+---
+This alert has been deactivated. Log in to TradeCraft to re-enable it or create new alerts.
+
+TradeCraft - Trade Smarter
+  `.trim();
+
+  const html = `
+  <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
+    <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
+        <img src="${frontendUrl}/logo192.png" alt="TradeCraft" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
+        <div style="font-weight:600;color:#e6edf3">TradeCraft Alerts</div>
+      </div>
+      <div style="padding:24px">
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="font-size:48px;margin-bottom:8px">🚨</div>
+          <h2 style="margin:0;color:#e6edf3;font-size:24px">${ticker}</h2>
+          <p style="margin:8px 0 0 0;color:${alertType === 'above' ? '#48BB78' : '#F56565'};font-size:16px;font-weight:600">
+            ${direction} $${parseFloat(priceLevel).toFixed(2)}
+          </p>
+        </div>
+        
+        <div style="background:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="color:#9ca3af;font-size:14px">Alert Price</span>
+            <span style="color:#e6edf3;font-weight:600;font-size:18px">$${parseFloat(priceLevel).toFixed(2)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:#9ca3af;font-size:14px">Triggered At</span>
+            <span style="color:#e6edf3;font-size:14px">${formattedTime}</span>
+          </div>
+          ${description ? `
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #374151">
+            <span style="color:#9ca3af;font-size:14px">Note: </span>
+            <span style="color:#e6edf3;font-size:14px">${description}</span>
+          </div>
+          ` : ''}
+        </div>
+
+        <div style="text-align:center;margin-top:20px">
+          <a href="${frontendUrl}" style="display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">Open TradeCraft</a>
+        </div>
+
+        <p style="margin:20px 0 0 0;color:#9ca3af;font-size:12px;text-align:center;line-height:1.5">
+          This alert has been deactivated. Log in to re-enable it or create new alerts.
+        </p>
+      </div>
+    </div>
+  </div>`;
+
+  return { from, to, subject: emailSubject, text, html };
+}
+
 module.exports = { 
   createTransport, 
   buildResetEmail, 
   buildContactNotificationEmail, 
   buildContactConfirmationEmail,
   buildBugReportNotificationEmail,
-  buildBugReportConfirmationEmail
+  buildBugReportConfirmationEmail,
+  buildPriceAlertEmail
 };
 
 
