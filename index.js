@@ -397,6 +397,16 @@ server.on('error', (error) => {
 
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`Server started on port ${PORT} (0.0.0.0)`);
+  
+  // Test database connection on startup
+  console.log('[Startup] Testing database connection...');
+  console.log('[Startup] DATABASE_URL exists:', !!process.env.DATABASE_URL);
+  try {
+    const dbResult = await pool.query('SELECT NOW() as time, current_database() as db');
+    console.log('[Startup] ✅ Database connected! DB:', dbResult.rows[0].db);
+  } catch (dbErr) {
+    console.error('[Startup] ❌ Database connection failed:', dbErr.message);
+  }
   console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
   console.log(`- Background streams: http://localhost:${PORT}/debug/background-streams`);
   
