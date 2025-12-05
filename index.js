@@ -417,20 +417,24 @@ server.listen(PORT, '0.0.0.0', async () => {
   
   // Auto-start background streams if enabled via environment variable
   // Set ENABLE_BACKGROUND_STREAMS=true to enable
+  // IMPORTANT: Defer initialization to allow health checks to pass first
   if (process.env.ENABLE_BACKGROUND_STREAMS === 'true') {
-    console.log('[BackgroundStreams] Auto-starting background stream manager...');
-    try {
-      // Start alert engine first (it subscribes to stream data events)
-      await alertEngine.start();
-      console.log('[AlertEngine] Successfully started');
-      
-      // Then start background streams (they emit data events)
-      await backgroundStreamManager.initializeFromDatabase();
-      console.log('[BackgroundStreams] Successfully initialized');
-    } catch (err) {
-      console.error('[BackgroundStreams] Failed to initialize:', err.message);
-      // Don't crash the server, just log the error
-    }
+    console.log('[BackgroundStreams] Will start in 5 seconds (allowing health checks to pass)...');
+    setTimeout(async () => {
+      console.log('[BackgroundStreams] Auto-starting background stream manager...');
+      try {
+        // Start alert engine first (it subscribes to stream data events)
+        await alertEngine.start();
+        console.log('[AlertEngine] Successfully started');
+        
+        // Then start background streams (they emit data events)
+        await backgroundStreamManager.initializeFromDatabase();
+        console.log('[BackgroundStreams] Successfully initialized');
+      } catch (err) {
+        console.error('[BackgroundStreams] Failed to initialize:', err.message);
+        // Don't crash the server, just log the error
+      }
+    }, 5000); // Wait 5 seconds for health checks to pass
   } else {
     console.log('[BackgroundStreams] Disabled. Set ENABLE_BACKGROUND_STREAMS=true to enable.');
   }
