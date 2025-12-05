@@ -356,6 +356,7 @@ app.use((err, req, res, _next) => {
 // app.locals.realtimeAlertChecker = realtimeAlertChecker;
 
 const PORT = process.env.PORT || 3001;
+console.log(`[Startup] PORT env var: ${process.env.PORT}, using port: ${PORT}`);
 const http = require('http');
 
 // Create HTTP server explicitly to configure connection handling
