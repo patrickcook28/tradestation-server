@@ -357,45 +357,10 @@ app.use((err, req, res, _next) => {
 
 const PORT = process.env.PORT || 3001;
 console.log(`[Startup] PORT env var: ${process.env.PORT}, using port: ${PORT}`);
-const http = require('http');
 
-// Create HTTP server explicitly to configure connection handling
-const server = http.createServer(app);
-
-// Configure server for handling many concurrent streaming connections
-server.maxHeadersCount = 0; // Remove header count limit
-server.headersTimeout = 0;   // No timeout for headers (streaming connections)
-server.requestTimeout = 0;   // No timeout for requests (streaming connections)
-server.keepAliveTimeout = 65000; // Keep-alive for 65 seconds
-server.timeout = 0; // No socket timeout (important for long-lived streams)
-
-// Increase max connections (default is based on uLimit, but we want unlimited for streams)
-// This allows many concurrent streaming connections without blocking new requests
-server.maxConnections = 0; // 0 = unlimited (use OS limits)
-
-// Monitor server connection events
-server.on('connection', (socket) => {
-  // Disable Nagle's algorithm for better real-time streaming performance
-  socket.setNoDelay(true);
-  // Keep connections alive
-  socket.setKeepAlive(true, 60000);
-  
-  // Log connection count periodically (not on every connection to avoid spam)
-  if (Math.random() < 0.05) { // Log ~5% of connections
-    console.log(`[Server] Active connections: ${server._connections || 'unknown'}`);
-  }
-});
-
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use`);
-    process.exit(1);
-  } else {
-    console.error('Server error:', error);
-  }
-});
-
-server.listen(PORT, '0.0.0.0', async () => {
+// SIMPLIFIED FOR RAILWAY - using app.listen() instead of custom http.createServer
+// The custom server config was for advanced streaming, can re-enable after Railway works
+const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`Server started on port ${PORT} (0.0.0.0)`);
   
   // Test database connection on startup
