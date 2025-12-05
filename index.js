@@ -131,6 +131,11 @@ app.use((req, res, next) => {
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
 
+// Simple health check for Railway/container orchestration (responds immediately)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
 app.get('/status', asyncHandler(async (req, res) => {
   let dbStatus = 'Unknown';
   let users = [];
@@ -389,8 +394,8 @@ server.on('error', (error) => {
   }
 });
 
-server.listen(PORT, async () => {
-  console.log(`Server started on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', async () => {
+  console.log(`Server started on port ${PORT} (0.0.0.0)`);
   console.log(`- Debug endpoint: http://localhost:${PORT}/debug/server-status`);
   console.log(`- Background streams: http://localhost:${PORT}/debug/background-streams`);
   
