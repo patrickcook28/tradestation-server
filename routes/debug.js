@@ -26,18 +26,17 @@ const health = async (req, res) => {
     health.status = 'unhealthy';
   }
   
-  // // Actually test SMTP connection
-  // try {
-  //   const transporter = createTransport();
-  //   await transporter.verify();
-  //   health.email = 'connected';
-  //   transporter.close();
-  // } catch (err) {
-  //   console.error('[Health] Email check failed:', err.message);
-  //   health.email = 'disconnected';
-  //   health.emailError = err.message;
-  //   // Don't mark unhealthy for email - it's not critical for app function
-  // }
+  // Check Resend API connectivity
+  try {
+    const transporter = createTransport();
+    await transporter.verify();
+    health.email = 'connected';
+  } catch (err) {
+    console.error('[Health] Email check failed:', err.message);
+    health.email = 'disconnected';
+    health.emailError = err.message;
+    // Don't mark unhealthy for email - it's not critical for app function
+  }
   
   const statusCode = health.status === 'ok' ? 200 : 503;
   res.status(statusCode).json(health);

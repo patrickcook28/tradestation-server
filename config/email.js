@@ -1,29 +1,59 @@
-const nodemailer = require('nodemailer');
+/**
+ * Email transporter using Resend HTTP API
+ * Works everywhere (Railway, local, etc) - no SMTP needed
+ * 
+ * Required env var: RESEND_API_KEY
+ */
+
+class ResendTransporter {
+  constructor(apiKey) {
+    this.apiKey = apiKey;
+    this.baseUrl = 'https://api.resend.com';
+  }
+  
+  async sendMail({ from, to, subject, text, html }) {
+    const response = await fetch(`${this.baseUrl}/emails`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        text,
+        html
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new Error(`Resend API error: ${error.message || response.statusText}`);
+    }
+    
+    return response.json();
+  }
+  
+  async verify() {
+    const response = await fetch(`${this.baseUrl}/domains`, {
+      headers: { 'Authorization': `Bearer ${this.apiKey}` }
+    });
+    if (!response.ok) throw new Error('Invalid Resend API key');
+    return true;
+  }
+  
+  close() {
+    // No-op for HTTP client
+  }
+}
 
 function createTransport() {
-  const host = process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com';
-  // Default to port 587 (STARTTLS) which works better with cloud providers
-  const port = Number(process.env.ZOHO_SMTP_PORT || 587);
-  // secure=true for port 465 (SSL), false for 587 (STARTTLS upgrades automatically)
-  const secure = process.env.ZOHO_SMTP_SECURE ? String(process.env.ZOHO_SMTP_SECURE).toLowerCase() === 'true' : (port === 465);
-  const user = process.env.ZOHO_SMTP_USER;
-  const pass = process.env.ZOHO_SMTP_PASS;
-
-  if (!user || !pass) {
-    throw new Error('Missing Zoho SMTP credentials (ZOHO_SMTP_USER/ZOHO_SMTP_PASS)');
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing RESEND_API_KEY environment variable');
   }
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-    connectionTimeout: 10000, // 10 seconds to establish connection
-    greetingTimeout: 10000,   // 10 seconds for server greeting
-    socketTimeout: 30000,     // 30 seconds for socket inactivity
-    logger: process.env.NODE_ENV !== 'production',
-    debug: process.env.NODE_ENV !== 'production'
-  });
+  return new ResendTransporter(apiKey);
 }
 
 function buildResetEmail({ to, resetUrl }) {
