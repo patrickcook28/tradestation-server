@@ -1,22 +1,15 @@
 require('./instrument.js');
 const express = require('express');
-const pool = require('./db');
 const path = require("path");
-const fetch = require('node-fetch');
 const dotenv = require('dotenv');
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
 const cors = require('cors');
 const routes = require('./routes');
-const { captureException, captureMessage } = require('./utils/errorReporting');
+const { captureException } = require('./utils/errorReporting');
 const Sentry = require('@sentry/node');
 const Pusher = require("pusher");
-const RealtimeAlertChecker = require('./workers/realtimeAlertChecker');
 const backgroundStreamManager = require('./utils/backgroundStreamManager');
 const alertEngine = require('./workers/alertEngine');
 const logger = require('./config/logging');
-const fs = require('fs');
-const hbs = require('hbs');
 const { authenticateToken } = require('./routes/auth');
 const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
 
@@ -131,129 +124,11 @@ app.use((req, res, next) => {
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
 
-// Health check for Railway - includes database connectivity check
-app.get('/health', async (req, res) => {
-  try {
-    // Quick DB check (SELECT 1 is fast)
-    await pool.query('SELECT 1');
-    res.status(200).json({ 
-      status: 'ok', 
-      db: 'connected',
-      timestamp: Date.now() 
-    });
-  } catch (err) {
-    console.error('[Health] Database check failed:', err.message);
-    res.status(503).json({ 
-      status: 'unhealthy', 
-      db: 'disconnected',
-      error: err.message,
-      timestamp: Date.now() 
-    });
-  }
-});
-
-app.get('/status', asyncHandler(async (req, res) => {
-  let dbStatus = 'Unknown';
-  let users = [];
-  try {
-    // Check DB connection
-    await pool.query('SELECT 1');
-    dbStatus = 'Connected';
-    // Get users (id and email only)
-    const result = await pool.query('SELECT id, email FROM users ORDER BY id');
-    users = result.rows;
-  } catch (err) {
-    dbStatus = 'Error: ' + err.message;
-  }
-  res.render('status', { dbStatus, users });
-}));
-
-// Debug endpoint for monitoring server responsiveness
-app.get('/debug/server-status', asyncHandler(statusEndpoint));
-
-// Debug endpoint for stream diagnostics
-app.get('/debug/streams', asyncHandler(async (req, res) => {
-  try {
-    const barsManager = require('./utils/barsStreamManager');
-    const quotesManager = require('./utils/quoteStreamManager');
-    const ordersManager = require('./utils/ordersStreamManager');
-    const positionsManager = require('./utils/positionsStreamManager');
-    
-    const diagnostics = {
-      timestamp: new Date().toISOString(),
-      bars: barsManager.getDebugInfo ? barsManager.getDebugInfo() : [],
-      quotes: quotesManager.getDebugInfo ? quotesManager.getDebugInfo() : [],
-      orders: ordersManager.getDebugInfo ? ordersManager.getDebugInfo() : [],
-      positions: positionsManager.getDebugInfo ? positionsManager.getDebugInfo() : []
-    };
-    
-    res.json(diagnostics);
-  } catch (error) {
-    console.error('Error getting stream diagnostics:', error);
-    res.status(500).json({ error: 'Failed to get stream diagnostics', message: error.message });
-  }
-}));
-
-// Debug endpoint to cleanup stale connections
-app.post('/debug/streams/cleanup', asyncHandler(async (req, res) => {
-  try {
-    const barsManager = require('./utils/barsStreamManager');
-    const quotesManager = require('./utils/quoteStreamManager');
-    const ordersManager = require('./utils/ordersStreamManager');
-    const positionsManager = require('./utils/positionsStreamManager');
-    const { destroyIdleSockets } = require('./utils/httpAgent');
-    
-    console.log('[Debug] Starting manual stream cleanup...');
-    
-    const results = {
-      bars: barsManager.cleanupStaleConnections ? barsManager.cleanupStaleConnections() : 0,
-      quotes: quotesManager.cleanupStaleConnections ? quotesManager.cleanupStaleConnections() : 0,
-      orders: ordersManager.cleanupStaleConnections ? ordersManager.cleanupStaleConnections() : 0,
-      positions: positionsManager.cleanupStaleConnections ? positionsManager.cleanupStaleConnections() : 0
-    };
-    
-    // Also destroy idle sockets to free up resources
-    const socketsDestroyed = destroyIdleSockets();
-    results.idleSocketsDestroyed = socketsDestroyed;
-    
-    const total = results.bars + results.quotes + results.orders + results.positions;
-    
-    console.log(`[Debug] Cleanup complete: ${total} stale connections, ${socketsDestroyed} idle sockets`);
-    
-    res.json({
-      message: `Cleaned up ${total} stale connection(s) and ${socketsDestroyed} idle socket(s)`,
-      details: results
-    });
-  } catch (error) {
-    console.error('Error cleaning up stale connections:', error);
-    res.status(500).json({ error: 'Failed to cleanup stale connections', message: error.message });
-  }
-}));
-
-// ===============================
-// Background Stream Manager Status (for Admin UI)
-// ===============================
-
-app.get('/debug/background-streams', asyncHandler(async (req, res) => {
-  try {
-    const status = backgroundStreamManager.getStatus();
-    res.json(status);
-  } catch (error) {
-    console.error('Error getting background stream status:', error);
-    res.status(500).json({ error: 'Failed to get status', message: error.message });
-  }
-}));
-
-// Alert engine stats endpoint
-app.get('/debug/alert-engine', asyncHandler(async (req, res) => {
-  try {
-    const stats = alertEngine.getStats();
-    res.json(stats);
-  } catch (error) {
-    console.error('Error getting alert engine stats:', error);
-    res.status(500).json({ error: 'Failed to get stats', message: error.message });
-  }
-}));
+// Health, status, and debug routes
+app.get('/health', asyncHandler(routes.debugRoutes.health));
+app.get('/status', asyncHandler(routes.debugRoutes.status));
+app.get('/debug', asyncHandler(routes.debugRoutes.debug));
+app.post('/debug/cleanup', asyncHandler(routes.debugRoutes.cleanup));
 
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));

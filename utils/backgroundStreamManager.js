@@ -29,6 +29,8 @@ class InternalSubscriber {
     this._headers = {};
     this._ended = false;
     this._buffer = '';
+    // MEMORY FIX: Cap buffer size to prevent unbounded growth from malformed data
+    this._maxBufferSize = 64 * 1024; // 64KB max buffer
     
     // Mimic Express response properties
     this.writableEnded = false;
@@ -64,6 +66,21 @@ class InternalSubscriber {
     try {
       const data = chunk.toString();
       this._buffer += data;
+      
+      // MEMORY FIX: If buffer exceeds max size, truncate from the beginning
+      // This handles malformed data that never produces complete lines
+      if (this._buffer.length > this._maxBufferSize) {
+        const overflow = this._buffer.length - this._maxBufferSize;
+        console.warn(`[InternalSubscriber] Buffer overflow (${this._buffer.length} bytes), truncating ${overflow} bytes`);
+        // Find the next newline after truncation point to avoid breaking a line mid-way
+        const truncatePoint = this._buffer.indexOf('\n', overflow);
+        if (truncatePoint !== -1) {
+          this._buffer = this._buffer.slice(truncatePoint + 1);
+        } else {
+          // No newline found, just truncate (data is likely malformed anyway)
+          this._buffer = this._buffer.slice(overflow);
+        }
+      }
       
       // Parse NDJSON - each line is a separate JSON object
       const lines = this._buffer.split('\n');
@@ -462,6 +479,25 @@ class BackgroundStreamManager {
     }
     
     logger.info(`[BackgroundStreamManager] Stopped ${userStreams.length} streams for user ${userId}`);
+  }
+  
+  /**
+   * Stop only quote streams for a user (preserves positions/orders streams)
+   */
+  async stopQuoteStreamsForUser(userId) {
+    const quoteStreams = [...this.streams.entries()]
+      .filter(([key]) => key.startsWith(`${userId}|quotes|`));
+    
+    for (const [key, stream] of quoteStreams) {
+      await stream.stop();
+      this.streams.delete(key);
+    }
+    
+    if (quoteStreams.length > 0) {
+      logger.info(`[BackgroundStreamManager] Stopped ${quoteStreams.length} quote stream(s) for user ${userId}`);
+    }
+    
+    return quoteStreams.length;
   }
   
   /**

@@ -10,6 +10,7 @@
  */
 
 const pool = require('../db');
+const logger = require('../config/logging');
 
 // Track all active requests
 const activeRequests = new Map();
@@ -77,7 +78,7 @@ function trackRequestStart(req, res, next) {
     // Log stream cleanup for debugging
     if (isStreaming) {
       const duration = Date.now() - startTime;
-      console.log(`[RequestMonitor] Stream ${requestId} ended (${reason}) after ${duration}ms: ${url}`);
+      logger.debug(`[RequestMonitor] Stream ${requestId} ended (${reason}) after ${duration}ms: ${url}`);
     }
   };
   
@@ -108,7 +109,7 @@ function trackRequestStart(req, res, next) {
       const isStale = res.writableEnded || res.finished || req.destroyed || req.aborted;
       
       if (isStale && activeStreams.has(requestId)) {
-        console.log(`[RequestMonitor] ⚠️ Detected stale stream ${requestId} (age: ${age}ms): ${url}`);
+        logger.debug(`[RequestMonitor] ⚠️ Detected stale stream ${requestId} (age: ${age}ms): ${url}`);
         cleanup('stale-detection');
       }
     }, 60000);
@@ -238,51 +239,51 @@ async function getServerStatus() {
 async function logServerStatus() {
   const status = await getServerStatus();
   
-  console.log('\n=== Server Status ===');
-  console.log(`Active Streams: ${status.activeStreams.total}`);
-  console.log(`Active Requests: ${status.activeRequests.total}`);
+  logger.debug('\n=== Server Status ===');
+  logger.debug(`Active Streams: ${status.activeStreams.total}`);
+  logger.debug(`Active Requests: ${status.activeRequests.total}`);
   
   if (status.httpAgent && !status.httpAgent.error) {
-    console.log(`\nHTTP Connections:`);
+    logger.debug(`\nHTTP Connections:`);
     const maxSocketsDisplay = status.httpAgent.maxSockets === Infinity ? 'Unlimited ✓' : 
                               status.httpAgent.maxSockets === null ? 'Unknown' : 
                               status.httpAgent.maxSockets;
-    console.log(`- Max Sockets: ${maxSocketsDisplay}`);
-    console.log(`- Active Sockets: ${status.httpAgent.totalActiveSockets}`);
-    console.log(`- Free Sockets: ${status.httpAgent.totalFreeSockets}`);
-    console.log(`- Pending Requests: ${status.httpAgent.totalPendingRequests}`);
+    logger.debug(`- Max Sockets: ${maxSocketsDisplay}`);
+    logger.debug(`- Active Sockets: ${status.httpAgent.totalActiveSockets}`);
+    logger.debug(`- Free Sockets: ${status.httpAgent.totalFreeSockets}`);
+    logger.debug(`- Pending Requests: ${status.httpAgent.totalPendingRequests}`);
     
     if (status.httpAgent.totalPendingRequests > 0) {
-      console.log(`  ⚠️  WARNING: ${status.httpAgent.totalPendingRequests} requests waiting for socket!`);
+      logger.debug(`  ⚠️  WARNING: ${status.httpAgent.totalPendingRequests} requests waiting for socket!`);
     }
   }
   
   if (status.database && !status.database.error) {
-    console.log(`\nDatabase Pool:`);
-    console.log(`- Total: ${status.database.totalConnections}/${status.database.maxConnections}`);
-    console.log(`- Idle: ${status.database.idleConnections}`);
-    console.log(`- Waiting: ${status.database.waitingRequests}`);
+    logger.debug(`\nDatabase Pool:`);
+    logger.debug(`- Total: ${status.database.totalConnections}/${status.database.maxConnections}`);
+    logger.debug(`- Idle: ${status.database.idleConnections}`);
+    logger.debug(`- Waiting: ${status.database.waitingRequests}`);
   }
   
   if (status.activeStreams.total > 0) {
-    console.log(`\nActive Streams:`);
+    logger.debug(`\nActive Streams:`);
     status.activeStreams.streams.slice(0, 5).forEach(stream => {
       const urlShort = stream.url.length > 80 ? stream.url.substring(0, 77) + '...' : stream.url;
-      console.log(`  [${stream.id}] ${stream.method} ${urlShort}`);
+      logger.debug(`  [${stream.id}] ${stream.method} ${urlShort}`);
     });
     if (status.activeStreams.total > 5) {
-      console.log(`  ... and ${status.activeStreams.total - 5} more`);
+      logger.debug(`  ... and ${status.activeStreams.total - 5} more`);
     }
   }
   
   if (status.activeRequests.total > 0) {
-    console.log(`\nActive Requests:`);
+    logger.debug(`\nActive Requests:`);
     status.activeRequests.requests.forEach(req => {
-      console.log(`  [${req.id}] ${req.method} ${req.url} - ${req.duration}ms`);
+      logger.debug(`  [${req.id}] ${req.method} ${req.url} - ${req.duration}ms`);
     });
   }
   
-  console.log('===================\n');
+  logger.debug('===================\n');
 }
 
 /**

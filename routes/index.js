@@ -9,6 +9,7 @@ const tradeJournalsRouter = require('./tradeJournals');
 const indicatorsRoutes = require('./indicators');
 const contactRoutes = require('./contact');
 const bugReportsRoutes = require('./bugReports');
+const debugRoutes = require('./debug');
 
 module.exports = {
     authRoutes,
@@ -21,5 +22,6 @@ module.exports = {
     tradeJournalsRouter,
     indicatorsRoutes,
     contactRoutes,
-    bugReportsRoutes
+    bugReportsRoutes,
+    debugRoutes
 };

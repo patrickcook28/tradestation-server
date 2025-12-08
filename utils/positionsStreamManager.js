@@ -9,7 +9,7 @@ const mux = new StreamMultiplexer({
 
 // Wrap addSubscriber to inject lightweight start log and heartbeat to subscribers
 const addSubscriber = async (userId, deps, res) => {
-  try { console.log(`[Positions] addSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
+  try { logger.debug(`[Positions] addSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
 
   // Add periodic heartbeat to keep client-side connection active even if upstream is idle
   try {
@@ -25,7 +25,7 @@ const addSubscriber = async (userId, deps, res) => {
 
 // For background streams - non-exclusive, simpler setup
 const addBackgroundSubscriber = async (userId, deps, res) => {
-  try { console.log(`[Positions] addBackgroundSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
+  try { logger.debug(`[Positions] addBackgroundSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
   return mux.addSubscriber(userId, deps, res);
 };
 

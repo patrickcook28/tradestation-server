@@ -195,25 +195,10 @@ class AlertEngine {
     this.stats.quotesProcessed++;
     this.stats.lastProcessedAt = new Date();
     
-    // Debug: Log first quote for each symbol (only once)
-    if (!this._loggedSymbols) this._loggedSymbols = new Set();
-    if (!this._loggedSymbols.has(symbol)) {
-      this._loggedSymbols.add(symbol);
-      logger.info(`[AlertEngine] First quote received for ${symbol}: $${lastPrice}. Indexed symbols: [${[...this.alertsBySymbol.keys()].join(', ')}]`);
-    }
-    
     // O(1) lookup: Get alerts for this symbol
     const symbolAlerts = this.alertsBySymbol.get(symbol);
     if (!symbolAlerts || symbolAlerts.length === 0) {
       return; // No alerts for this symbol
-    }
-    
-    // Debug: Log when we have matching alerts (once per symbol)
-    if (!this._loggedAlertMatches) this._loggedAlertMatches = new Set();
-    if (!this._loggedAlertMatches.has(symbol)) {
-      this._loggedAlertMatches.add(symbol);
-      logger.info(`[AlertEngine] Found ${symbolAlerts.length} alert(s) for ${symbol}. Checking against price $${lastPrice}`);
-      symbolAlerts.forEach(a => logger.info(`[AlertEngine]   - Alert ${a.id}: ${a.alert_type} ${a.price_level}`));
     }
     
     // O(k) check: Only check alerts for this specific symbol
@@ -230,16 +215,10 @@ class AlertEngine {
     const shouldTrigger = this.evaluateAlertCondition(alert, currentPrice);
     
     if (!shouldTrigger) {
-      // Debug: Log near-misses (within 0.5% of trigger)
-      const priceLevel = parseFloat(alert.price_level);
-      const pctDiff = Math.abs((currentPrice - priceLevel) / priceLevel * 100);
-      if (pctDiff < 0.5) {
-        logger.debug(`[AlertEngine] Alert ${alert.id} (${alert.ticker} ${alert.alert_type} ${priceLevel}) NOT triggered. Current: $${currentPrice}, Diff: ${pctDiff.toFixed(3)}%`);
-      }
       return;
     }
     
-    logger.info(`[AlertEngine] ✅ Alert ${alert.id} condition MET! ${alert.ticker} ${alert.alert_type} ${alert.price_level}, current: $${currentPrice}`);
+    logger.info(`[AlertEngine] ✅ Alert ${alert.id} TRIGGERED: ${alert.ticker} ${alert.alert_type} ${alert.price_level}, current: $${currentPrice}`);
     
     // Trigger the alert (this will deactivate it and remove from index)
     this.triggerAlert(alert, currentPrice, quoteData);
@@ -493,27 +472,61 @@ class AlertEngine {
   }
 
   /**
-   * Ensure a background stream is running for the alert's symbol
+   * Ensure a background stream is running for the alert's symbol.
+   * 
+   * IMPORTANT: We consolidate ALL symbols for a user into ONE quote stream.
+   * If user already has a stream for some symbols, we stop it and create
+   * a new one with all symbols combined to avoid duplicate streams.
    */
   async ensureStreamForAlert(alert) {
     try {
       const backgroundStreamManager = require('../utils/backgroundStreamManager');
-      const symbol = alert.ticker.toUpperCase();
+      const newSymbol = alert.ticker.toUpperCase();
+      const userId = alert.user_id;
       
-      // Check if we already have a stream for this user with this symbol
+      // Get all existing quote streams for this user
       const existingStreams = backgroundStreamManager.getStatus().streams || [];
-      const hasStream = existingStreams.some(s => 
-        s.userId === alert.user_id && 
-        s.streamType === 'quotes' && 
-        s.key.includes(symbol)
+      const userQuoteStreams = existingStreams.filter(s => 
+        s.userId === userId && s.streamType === 'quotes'
       );
       
-      if (!hasStream) {
-        logger.info(`[AlertEngine] Starting background stream for user ${alert.user_id}, symbol ${symbol}`);
-        await backgroundStreamManager.startStreamsForUser(alert.user_id, {
-          quotes: [symbol]
+      // Check if the symbol is already covered by an existing stream
+      const symbolAlreadyCovered = userQuoteStreams.some(s => {
+        // Extract symbols from key (format: "userId|quotes|SYM1,SYM2,SYM3")
+        const keyParts = s.key.split('|');
+        const symbolsCsv = keyParts[2] || '';
+        const symbols = symbolsCsv.split(',').map(sym => sym.trim().toUpperCase());
+        return symbols.includes(newSymbol);
+      });
+      
+      if (symbolAlreadyCovered) {
+        return; // Symbol already in an active stream
+      }
+      
+      // Collect all symbols from existing streams + the new one
+      const allSymbols = new Set();
+      allSymbols.add(newSymbol);
+      
+      for (const s of userQuoteStreams) {
+        const keyParts = s.key.split('|');
+        const symbolsCsv = keyParts[2] || '';
+        symbolsCsv.split(',').forEach(sym => {
+          if (sym.trim()) allSymbols.add(sym.trim().toUpperCase());
         });
       }
+      
+      // Stop all existing quote streams for this user (we'll create one consolidated stream)
+      if (userQuoteStreams.length > 0) {
+        logger.info(`[AlertEngine] Consolidating ${userQuoteStreams.length} quote stream(s) for user ${userId}`);
+        await backgroundStreamManager.stopQuoteStreamsForUser(userId);
+      }
+      
+      // Start a single consolidated stream with all symbols
+      const consolidatedSymbols = [...allSymbols].sort().join(',');
+      logger.info(`[AlertEngine] Starting consolidated quote stream for user ${userId}: ${consolidatedSymbols}`);
+      await backgroundStreamManager.startStreamsForUser(userId, {
+        quotes: [consolidatedSymbols]
+      });
     } catch (err) {
       logger.error(`[AlertEngine] Failed to ensure stream for alert:`, err.message);
     }
