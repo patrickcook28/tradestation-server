@@ -106,12 +106,22 @@ router.get('/', async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const result = await pool.query(
-      `SELECT id, email, subject, description, user_id, created_at, status
-       FROM bug_reports
-       ORDER BY created_at DESC
-       LIMIT 100`
-    );
+    const { email } = req.query;
+    
+    let query = `
+      SELECT id, email, subject, description, user_id, created_at, status, resolution_notes
+      FROM bug_reports
+    `;
+    const params = [];
+    
+    if (email) {
+      query += ` WHERE email ILIKE $1`;
+      params.push(`%${email}%`);
+    }
+    
+    query += ` ORDER BY created_at DESC LIMIT 100`;
+
+    const result = await pool.query(query, params);
 
     res.json(result.rows);
 
@@ -153,7 +163,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update bug report status (admin only)
+// Update bug report status and resolution notes (admin only)
 router.put('/:id', async (req, res) => {
   try {
     const userId = req.user && req.user.id;
@@ -164,20 +174,48 @@ router.put('/:id', async (req, res) => {
     }
 
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, resolution_notes } = req.body;
 
-    if (!['new', 'in_progress', 'resolved', 'closed'].includes(status)) {
-      return res.status(400).json({ 
-        error: 'Invalid status. Must be: new, in_progress, resolved, or closed' 
-      });
+    // Build dynamic update query
+    const updates = [];
+    const params = [];
+    let paramCount = 1;
+
+    if (status !== undefined) {
+      if (!['new', 'in_progress', 'resolved', 'closed'].includes(status)) {
+        return res.status(400).json({ 
+          error: 'Invalid status. Must be: new, in_progress, resolved, or closed' 
+        });
+      }
+      updates.push(`status = $${paramCount++}`);
+      params.push(status);
+      
+      // If marking as resolved, set resolved_by and resolved_at
+      if (status === 'resolved') {
+        updates.push(`resolved_by = $${paramCount++}`);
+        params.push(userId);
+        updates.push(`resolved_at = NOW()`);
+      }
     }
+
+    if (resolution_notes !== undefined) {
+      updates.push(`resolution_notes = $${paramCount++}`);
+      params.push(resolution_notes);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.push(`updated_at = NOW()`);
+    params.push(id);
 
     const result = await pool.query(
       `UPDATE bug_reports 
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2
+       SET ${updates.join(', ')}
+       WHERE id = $${paramCount}
        RETURNING *`,
-      [status, id]
+      params
     );
 
     if (result.rows.length === 0) {
@@ -186,7 +224,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: 'Status updated successfully',
+      message: 'Bug report updated successfully',
       report: result.rows[0]
     });
 

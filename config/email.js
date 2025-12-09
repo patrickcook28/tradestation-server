@@ -393,7 +393,7 @@ The PrecisionTrader Team
  */
 function buildPriceAlertEmail({ to, ticker, alertType, priceLevel, triggeredAt, description }) {
   const from = process.env.EMAIL_FROM || 'alerts@precisiontrader.tech';
-  const frontendUrl = process.env.FRONTEND_URL || 'https://app.tradecraft.app';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://precisiontrader.tech';
   const direction = alertType === 'above' || alertType === 'cross_above' ? 'crossed above' : 'crossed below';
   const emailSubject = `🚨 Price Alert: ${ticker} ${direction} $${parseFloat(priceLevel).toFixed(2)}`;
   
@@ -415,17 +415,17 @@ Triggered At: ${formattedTime}
 ${description ? `Note: ${description}` : ''}
 
 ---
-This alert has been deactivated. Log in to TradeCraft to re-enable it or create new alerts.
+This alert has been deactivated. Log in to PrecisionTrader to re-enable it or create new alerts.
 
-TradeCraft - Trade Smarter
+PrecisionTrader - Trade Smarter
   `.trim();
 
   const html = `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
       <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${frontendUrl}/logo192.png" alt="TradeCraft" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">TradeCraft Alerts</div>
+        <img src="${frontendUrl}/logo192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
+        <div style="font-weight:600;color:#e6edf3">PrecisionTrader Alerts</div>
       </div>
       <div style="padding:24px">
         <div style="text-align:center;margin-bottom:20px">
@@ -454,7 +454,7 @@ TradeCraft - Trade Smarter
         </div>
 
         <div style="text-align:center;margin-top:20px">
-          <a href="${frontendUrl}" style="display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">Open TradeCraft</a>
+          <a href="${frontendUrl}" style="display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">Open PrecisionTrader</a>
         </div>
 
         <p style="margin:20px 0 0 0;color:#9ca3af;font-size:12px;text-align:center;line-height:1.5">

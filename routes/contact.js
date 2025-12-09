@@ -95,9 +95,10 @@ router.post('/', async (req, res) => {
 // Get contact submissions (admin only)
 router.get('/submissions', async (req, res) => {
   try {
-    // Check if user is admin (you may want to add proper admin authentication)
-    const { user } = req;
-    if (!user || !user.superuser) {
+    const userId = req.user && req.user.id;
+    // Verify superuser from DB
+    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [userId]);
+    if (!userResult.rows.length || !userResult.rows[0].superuser) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -121,8 +122,10 @@ router.get('/submissions', async (req, res) => {
 // Update contact submission status (admin only)
 router.put('/submissions/:id', async (req, res) => {
   try {
-    const { user } = req;
-    if (!user || !user.superuser) {
+    const userId = req.user && req.user.id;
+    // Verify superuser from DB
+    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [userId]);
+    if (!userResult.rows.length || !userResult.rows[0].superuser) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
