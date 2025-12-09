@@ -1,107 +1,67 @@
 /**
  * BackgroundStreamManager
  * 
- * Manages background streams for users with alerts/loss features enabled.
- * These streams run 24/7 and don't require an active HTTP connection.
+ * Manages background quote streams for users with active alerts.
+ * Runs 24/7, automatically reconnects on failure.
  * 
- * Key features:
- * - Internal subscribers (not HTTP-bound)
- * - Automatic reconnection on stream failure
- * - Health telemetry logged every minute
- * - Token refresh on 401/stream failure
- * - Coexists with user's active trading sessions
+ * SIMPLIFIED DESIGN:
+ * - Each BackgroundStream manages ONE upstream connection
+ * - Uses generation counter to ignore stale callbacks
+ * - Simple state: stopped | connecting | alive | failed
+ * - Reconnects indefinitely (no max attempts) with exponential backoff capped at 60s
  */
 
 const pool = require('../db');
 const logger = require('../config/logging');
 
 /**
- * InternalSubscriber - A subscriber that's not tied to an HTTP response.
- * Mimics the Express response interface so StreamMultiplexer can use it.
+ * InternalSubscriber - Mimics Express response for StreamMultiplexer compatibility
  */
 class InternalSubscriber {
-  constructor(options = {}) {
-    this.id = `internal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    this.onData = options.onData || (() => {});
-    this.onEnd = options.onEnd || (() => {});
-    this.onError = options.onError || (() => {});
-    
-    this._headers = {};
+  constructor(onData, onEnd, onError) {
+    this.id = `bg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this._onData = onData;
+    this._onEnd = onEnd;
+    this._onError = onError;
     this._ended = false;
     this._buffer = '';
-    // MEMORY FIX: Cap buffer size to prevent unbounded growth from malformed data
-    this._maxBufferSize = 64 * 1024; // 64KB max buffer
     
-    // Mimic Express response properties
+    // Express response compatibility
     this.writableEnded = false;
     this.finished = false;
     this.destroyed = false;
-    
-    // Event handlers storage
-    this._eventHandlers = {
-      close: [],
-      finish: [],
-      error: []
-    };
-    
-    // Fake request object for compatibility
-    this.req = {
-      query: {},
-      headers: {},
-      aborted: false,
-      destroyed: false,
-      on: (event, handler) => {},
-      _eventHandlers: { close: [], aborted: [] }
-    };
+    this._eventHandlers = { close: [], finish: [], error: [] };
+    this.req = { query: {}, headers: {}, aborted: false, destroyed: false, on: () => {} };
   }
   
-  // Express response interface
-  setHeader(name, value) {
-    this._headers[name] = value;
-  }
+  setHeader() {}
+  status() { return this; }
   
   write(chunk) {
     if (this._ended) return false;
     
-    try {
-      const data = chunk.toString();
-      this._buffer += data;
-      
-      // MEMORY FIX: If buffer exceeds max size, truncate from the beginning
-      // This handles malformed data that never produces complete lines
-      if (this._buffer.length > this._maxBufferSize) {
-        const overflow = this._buffer.length - this._maxBufferSize;
-        console.warn(`[InternalSubscriber] Buffer overflow (${this._buffer.length} bytes), truncating ${overflow} bytes`);
-        // Find the next newline after truncation point to avoid breaking a line mid-way
-        const truncatePoint = this._buffer.indexOf('\n', overflow);
-        if (truncatePoint !== -1) {
-          this._buffer = this._buffer.slice(truncatePoint + 1);
-        } else {
-          // No newline found, just truncate (data is likely malformed anyway)
-          this._buffer = this._buffer.slice(overflow);
-        }
-      }
-      
-      // Parse NDJSON - each line is a separate JSON object
-      const lines = this._buffer.split('\n');
-      this._buffer = lines.pop() || ''; // Keep incomplete line in buffer
-      
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            const parsed = JSON.parse(line);
-            this.onData(parsed);
-          } catch (parseErr) {
-            // Some lines might not be JSON (heartbeats as raw text, etc.)
-            this.onData({ raw: line });
-          }
-        }
-      }
-      return true;
-    } catch (err) {
-      this.onError(err);
-      return false;
+    this._buffer += chunk.toString();
+    
+    // Cap buffer at 64KB to prevent memory issues
+    if (this._buffer.length > 65536) {
+      const idx = this._buffer.indexOf('\n', this._buffer.length - 65536);
+      this._buffer = idx !== -1 ? this._buffer.slice(idx + 1) : this._buffer.slice(-65536);
     }
+    
+    // Parse NDJSON lines
+    const lines = this._buffer.split('\n');
+    this._buffer = lines.pop() || '';
+    
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          this._onData(JSON.parse(line));
+        } catch (_) {
+          this._onData({ raw: line });
+        }
+      }
+    }
+    return true;
   }
   
   end() {
@@ -109,155 +69,175 @@ class InternalSubscriber {
     this._ended = true;
     this.writableEnded = true;
     this.finished = true;
-    
-    // Trigger close handlers
-    for (const handler of this._eventHandlers.close) {
-      try { handler(); } catch (_) {}
-    }
-    
-    this.onEnd();
-  }
-  
-  status(code) {
-    this._statusCode = code;
-    return this;
+    this._eventHandlers.close.forEach(h => { try { h(); } catch (_) {} });
+    this._onEnd();
   }
   
   json(data) {
     this.write(JSON.stringify(data));
     this.end();
-    return this;
   }
   
   on(event, handler) {
-    if (this._eventHandlers[event]) {
-      this._eventHandlers[event].push(handler);
-    }
+    if (this._eventHandlers[event]) this._eventHandlers[event].push(handler);
     return this;
   }
   
   removeAllListeners(event) {
-    if (this._eventHandlers[event]) {
-      this._eventHandlers[event] = [];
-    }
+    if (this._eventHandlers[event]) this._eventHandlers[event] = [];
     return this;
   }
   
-  // Force close the subscriber
   destroy() {
     this.destroyed = true;
     this.req.destroyed = true;
+    // Clear callbacks to prevent memory leaks
+    this._onData = () => {};
+    this._onEnd = () => {};
+    this._onError = () => {};
     this.end();
   }
 }
 
 /**
- * BackgroundStream - Represents a single background stream with health tracking
+ * BackgroundStream - Single background stream with auto-reconnect
  */
 class BackgroundStream {
   constructor(manager, userId, streamType, deps) {
     this.manager = manager;
     this.userId = userId;
-    this.streamType = streamType; // 'quotes', 'positions', 'orders'
-    this.deps = deps; // Stream-specific dependencies (symbols, accountId, etc.)
+    this.streamType = streamType;
+    this.deps = deps;
     
     this.subscriber = null;
+    this.status = 'stopped';
+    this.reconnectDelay = 1000;
+    this.reconnectTimer = null;
+    this.healthInterval = null;
+    
     this.startedAt = null;
     this.lastDataAt = null;
     this.messagesReceived = 0;
-    this.status = 'stopped';
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 10;
-    this.reconnectBackoff = 1000; // Start with 1 second
-    
-    // Health logging interval
-    this.healthInterval = null;
-    this.healthLogIntervalMs = 60000; // Log every minute
+  }
+  
+  getKey() {
+    if (typeof this.deps === 'string') {
+      return `${this.userId}|${this.streamType}|${this.deps}`;
+    }
+    if (this.deps?.accountId !== undefined) {
+      return `${this.userId}|${this.streamType}|${this.deps.accountId}|${this.deps.paperTrading ? 1 : 0}`;
+    }
+    return `${this.userId}|${this.streamType}|${JSON.stringify(this.deps)}`;
   }
   
   async start() {
-    if (this.status === 'alive') {
-      logger.info(`[BackgroundStream] Already running: ${this.getKey()}`);
+    if (this.status === 'alive' || this.status === 'connecting') {
       return;
     }
     
-    this.status = 'starting';
     this.startedAt = new Date();
     this.messagesReceived = 0;
-    this.reconnectAttempts = 0;
+    this.reconnectDelay = 1000;
     
-    await this.logHealth('start', { message: 'Stream starting' });
+    await this.connect();
+  }
+  
+  async connect() {
+    // Prevent concurrent connects
+    if (this.status === 'connecting') {
+      logger.debug(`[BackgroundStream] Already connecting, skipping: ${this.getKey()}`);
+      return;
+    }
+    
+    // Cancel any pending reconnect
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    
+    // Destroy old subscriber
+    if (this.subscriber) {
+      this.subscriber.destroy();
+      this.subscriber = null;
+    }
+    
+    this.status = 'connecting';
+    logger.info(`[BackgroundStream] Connecting: ${this.getKey()}`);
+    
+    const mux = this.getMultiplexer();
+    if (!mux) {
+      logger.error(`[BackgroundStream] Unknown stream type: ${this.streamType}`);
+      this.status = 'failed';
+      return;
+    }
+    
+    // Create subscriber - keep local reference for cleanup
+    const subscriber = new InternalSubscriber(
+      (data) => {
+        // Only process if this is still the active subscriber
+        if (this.subscriber !== subscriber) return;
+        this.handleData(data);
+      },
+      () => {
+        if (this.subscriber !== subscriber) return;
+        this.handleEnd();
+      },
+      (err) => {
+        if (this.subscriber !== subscriber) return;
+        this.handleError(err);
+      }
+    );
+    
+    this.subscriber = subscriber;
     
     try {
-      await this.connect();
+      const addFn = mux.addBackgroundSubscriber || mux.addSubscriber;
+      const result = await addFn(this.userId, this.deps, subscriber);
+      
+      // Check if this subscriber was replaced during await
+      if (this.subscriber !== subscriber) {
+        logger.debug(`[BackgroundStream] Subscriber replaced during connect, destroying stale`);
+        subscriber.destroy();
+        return;
+      }
+      
+      if (result?.__error) {
+        throw new Error(result.message || 'Failed to connect');
+      }
+      
+      this.status = 'alive';
+      this.lastDataAt = new Date();
+      this.reconnectDelay = 1000; // Reset backoff on success
       this.startHealthLogging();
+      logger.info(`[BackgroundStream] Connected: ${this.getKey()}`);
+      
     } catch (err) {
-      logger.error(`[BackgroundStream] Failed to start ${this.getKey()}:`, err.message);
-      this.status = 'error';
-      await this.logHealth('error', { error: err.message });
+      // Check if this subscriber was replaced
+      if (this.subscriber !== subscriber) {
+        subscriber.destroy();
+        return;
+      }
+      
+      logger.error(`[BackgroundStream] Connect failed: ${this.getKey()}`, err.message);
       this.scheduleReconnect();
     }
   }
   
-  async connect() {
-    const mux = this.getMultiplexer();
-    if (!mux) {
-      throw new Error(`Unknown stream type: ${this.streamType}`);
-    }
-    
-    // Create internal subscriber
-    this.subscriber = new InternalSubscriber({
-      onData: (data) => this.handleData(data),
-      onEnd: () => this.handleEnd(),
-      onError: (err) => this.handleError(err)
-    });
-    
-    logger.info(`[BackgroundStream] Connecting: ${this.getKey()}`);
-    
-    // Use addBackgroundSubscriber (non-exclusive) to allow coexistence with user streams
-    const addFn = mux.addBackgroundSubscriber || mux.addSubscriber;
-    const result = await addFn(this.userId, this.deps, this.subscriber);
-    
-    // Check if we got an error response
-    if (result && result.__error) {
-      const error = new Error(result.message || 'Failed to connect');
-      error.status = result.status;
-      error.response = result.response;
-      throw error;
-    }
-    
-    this.status = 'alive';
-    this.lastDataAt = new Date();
-    logger.info(`[BackgroundStream] Connected: ${this.getKey()}`);
-  }
-  
   getMultiplexer() {
     switch (this.streamType) {
-      case 'quotes':
-        return require('./quoteStreamManager');
-      case 'positions':
-        return require('./positionsStreamManager');
-      case 'orders':
-        return require('./ordersStreamManager');
-      default:
-        return null;
+      case 'quotes': return require('./quoteStreamManager');
+      case 'positions': return require('./positionsStreamManager');
+      case 'orders': return require('./ordersStreamManager');
+      default: return null;
     }
-  }
-  
-  getKey() {
-    return `${this.userId}|${this.streamType}|${JSON.stringify(this.deps)}`;
   }
   
   handleData(data) {
     this.messagesReceived++;
     this.lastDataAt = new Date();
     
-    // Skip heartbeats for processing
-    if (data.Heartbeat) {
-      return;
-    }
+    if (data.Heartbeat) return;
     
-    // Emit data to manager for alert processing
     this.manager.emit('data', {
       userId: this.userId,
       streamType: this.streamType,
@@ -266,80 +246,46 @@ class BackgroundStream {
   }
   
   handleEnd() {
+    if (this.status === 'stopped') return;
+    
     logger.info(`[BackgroundStream] Stream ended: ${this.getKey()}`);
-    this.status = 'disconnected';
     this.stopHealthLogging();
-    this.logHealth('disconnected', { message: 'Stream ended' });
     this.scheduleReconnect();
   }
   
   handleError(err) {
-    logger.error(`[BackgroundStream] Stream error: ${this.getKey()}`, err.message);
+    if (this.status === 'stopped') return;
     
-    const isTokenError = err.status === 401 || 
-                         (err.message && err.message.includes('token')) ||
-                         (err.message && err.message.includes('Unauthorized'));
-    
-    if (isTokenError) {
-      this.status = 'token_expired';
-      this.logHealth('token_expired', { error: err.message });
-    } else {
-      this.status = 'error';
-      this.logHealth('error', { error: err.message });
-    }
-    
+    logger.error(`[BackgroundStream] Stream error: ${this.getKey()}`, err?.message || err);
     this.stopHealthLogging();
     this.scheduleReconnect();
   }
   
   scheduleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      logger.error(`[BackgroundStream] Max reconnect attempts reached: ${this.getKey()}`);
-      this.status = 'failed';
-      this.logHealth('failed', { message: 'Max reconnect attempts reached' });
-      return;
-    }
+    if (this.status === 'stopped') return;
+    if (this.reconnectTimer) return; // Already scheduled
     
-    this.reconnectAttempts++;
-    const delay = Math.min(
-      this.reconnectBackoff * Math.pow(2, this.reconnectAttempts - 1),
-      60000 // Max 60 seconds
-    );
-    
-    // Add jitter to prevent thundering herd
-    const jitter = Math.random() * 1000;
-    const totalDelay = delay + jitter;
-    
-    logger.info(`[BackgroundStream] Reconnecting in ${Math.round(totalDelay)}ms (attempt ${this.reconnectAttempts}): ${this.getKey()}`);
     this.status = 'reconnecting';
-    this.logHealth('reconnecting', { 
-      attempt: this.reconnectAttempts, 
-      delayMs: Math.round(totalDelay) 
-    });
     
-    setTimeout(async () => {
-      try {
-        await this.connect();
-        this.reconnectAttempts = 0; // Reset on successful reconnect
-        this.startHealthLogging();
-        this.logHealth('reconnected', { message: 'Successfully reconnected' });
-      } catch (err) {
-        logger.error(`[BackgroundStream] Reconnect failed: ${this.getKey()}`, err.message);
-        this.scheduleReconnect();
-      }
-    }, totalDelay);
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s, 60s, ...
+    const delay = Math.min(this.reconnectDelay, 60000);
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
+    
+    logger.info(`[BackgroundStream] Reconnecting in ${delay}ms: ${this.getKey()}`);
+    
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
   
   startHealthLogging() {
-    if (this.healthInterval) {
-      clearInterval(this.healthInterval);
-    }
+    this.stopHealthLogging();
     
     this.healthInterval = setInterval(() => {
       this.logHealth('heartbeat');
-    }, this.healthLogIntervalMs);
+    }, 60000);
     
-    // Don't prevent Node.js from exiting
     if (this.healthInterval.unref) {
       this.healthInterval.unref();
     }
@@ -352,11 +298,9 @@ class BackgroundStream {
     }
   }
   
-  async logHealth(eventType, eventDetails = null) {
+  async logHealth(eventType, details = null) {
     try {
-      const uptimeSeconds = this.startedAt 
-        ? Math.floor((Date.now() - this.startedAt.getTime()) / 1000)
-        : 0;
+      const uptime = this.startedAt ? Math.floor((Date.now() - this.startedAt.getTime()) / 1000) : 0;
       
       await pool.query(`
         INSERT INTO stream_health_logs 
@@ -364,41 +308,34 @@ class BackgroundStream {
          event_type, event_details, last_data_at, messages_received)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `, [
-        this.userId,
-        this.streamType,
-        this.getKey(),
-        this.status,
-        this.startedAt,
-        uptimeSeconds,
-        eventType,
-        eventDetails ? JSON.stringify(eventDetails) : null,
-        this.lastDataAt,
-        this.messagesReceived
+        this.userId, this.streamType, this.getKey(), this.status,
+        this.startedAt, uptime, eventType, details ? JSON.stringify(details) : null,
+        this.lastDataAt, this.messagesReceived
       ]);
       
-      // Reset message counter after logging
-      const logged = this.messagesReceived;
       this.messagesReceived = 0;
-      
-      if (eventType === 'heartbeat') {
-        logger.debug(`[BackgroundStream] Health: ${this.getKey()} - uptime=${uptimeSeconds}s, msgs=${logged}`);
-      }
     } catch (err) {
-      logger.error(`[BackgroundStream] Failed to log health: ${err.message}`);
+      logger.error(`[BackgroundStream] Health log failed: ${err.message}`);
     }
   }
   
   async stop() {
     logger.info(`[BackgroundStream] Stopping: ${this.getKey()}`);
+    
+    this.status = 'stopped';
     this.stopHealthLogging();
+    
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     
     if (this.subscriber) {
       this.subscriber.destroy();
       this.subscriber = null;
     }
     
-    this.status = 'stopped';
-    await this.logHealth('stop', { message: 'Stream stopped' });
+    await this.logHealth('stop');
   }
   
   getStatus() {
@@ -409,10 +346,7 @@ class BackgroundStream {
       status: this.status,
       startedAt: this.startedAt,
       lastDataAt: this.lastDataAt,
-      uptimeSeconds: this.startedAt 
-        ? Math.floor((Date.now() - this.startedAt.getTime()) / 1000) 
-        : 0,
-      reconnectAttempts: this.reconnectAttempts
+      uptimeSeconds: this.startedAt ? Math.floor((Date.now() - this.startedAt.getTime()) / 1000) : 0
     };
   }
 }
@@ -422,18 +356,14 @@ class BackgroundStream {
  */
 class BackgroundStreamManager {
   constructor() {
-    this.streams = new Map(); // key -> BackgroundStream
-    this.eventHandlers = new Map(); // eventName -> Set<handler>
+    this.streams = new Map();
+    this.eventHandlers = new Map();
     this.isRunning = false;
   }
   
-  /**
-   * Start background streams for a user
-   */
   async startStreamsForUser(userId, config) {
     const { quotes = [], positions = [], orders = [] } = config;
     
-    // Start quote streams
     for (const symbolsCsv of quotes) {
       const key = `${userId}|quotes|${symbolsCsv}`;
       if (!this.streams.has(key)) {
@@ -443,7 +373,6 @@ class BackgroundStreamManager {
       }
     }
     
-    // Start position streams (supports multiple account IDs)
     for (const { accountId, paperTrading } of positions) {
       const key = `${userId}|positions|${accountId}|${paperTrading ? 1 : 0}`;
       if (!this.streams.has(key)) {
@@ -453,7 +382,6 @@ class BackgroundStreamManager {
       }
     }
     
-    // Start order streams
     for (const { accountId, paperTrading } of orders) {
       const key = `${userId}|orders|${accountId}|${paperTrading ? 1 : 0}`;
       if (!this.streams.has(key)) {
@@ -463,46 +391,31 @@ class BackgroundStreamManager {
       }
     }
     
-    logger.info(`[BackgroundStreamManager] Started streams for user ${userId}: ${this.streams.size} total active`);
+    logger.info(`[BackgroundStreamManager] User ${userId} streams started. Total: ${this.streams.size}`);
   }
   
-  /**
-   * Stop all streams for a user
-   */
   async stopStreamsForUser(userId) {
-    const userStreams = [...this.streams.entries()]
-      .filter(([key]) => key.startsWith(`${userId}|`));
+    const toStop = [...this.streams.entries()].filter(([k]) => k.startsWith(`${userId}|`));
     
-    for (const [key, stream] of userStreams) {
+    for (const [key, stream] of toStop) {
       await stream.stop();
       this.streams.delete(key);
     }
     
-    logger.info(`[BackgroundStreamManager] Stopped ${userStreams.length} streams for user ${userId}`);
+    logger.info(`[BackgroundStreamManager] Stopped ${toStop.length} streams for user ${userId}`);
   }
   
-  /**
-   * Stop only quote streams for a user (preserves positions/orders streams)
-   */
   async stopQuoteStreamsForUser(userId) {
-    const quoteStreams = [...this.streams.entries()]
-      .filter(([key]) => key.startsWith(`${userId}|quotes|`));
+    const toStop = [...this.streams.entries()].filter(([k]) => k.startsWith(`${userId}|quotes|`));
     
-    for (const [key, stream] of quoteStreams) {
+    for (const [key, stream] of toStop) {
       await stream.stop();
       this.streams.delete(key);
     }
     
-    if (quoteStreams.length > 0) {
-      logger.info(`[BackgroundStreamManager] Stopped ${quoteStreams.length} quote stream(s) for user ${userId}`);
-    }
-    
-    return quoteStreams.length;
+    return toStop.length;
   }
   
-  /**
-   * Initialize from database - start streams for all users with alerts
-   */
   async initializeFromDatabase() {
     if (this.isRunning) {
       logger.warn('[BackgroundStreamManager] Already running');
@@ -510,48 +423,41 @@ class BackgroundStreamManager {
     }
     
     this.isRunning = true;
-    logger.info('[BackgroundStreamManager] Initializing from database...');
+    logger.info('[BackgroundStreamManager] Initializing...');
     
     try {
-      // Find users with active alerts
-      const alertsResult = await pool.query(`
-        SELECT DISTINCT user_id, ticker 
-        FROM trade_alerts 
-        WHERE is_active = true
+      const result = await pool.query(`
+        SELECT DISTINCT user_id, ticker FROM trade_alerts WHERE is_active = true
       `);
       
-      // Group alerts by user
-      const userAlerts = new Map();
-      for (const row of alertsResult.rows) {
-        if (!userAlerts.has(row.user_id)) {
-          userAlerts.set(row.user_id, new Set());
+      // Group by user
+      const userTickers = new Map();
+      for (const row of result.rows) {
+        if (!userTickers.has(row.user_id)) {
+          userTickers.set(row.user_id, new Set());
         }
-        userAlerts.get(row.user_id).add(row.ticker);
+        userTickers.get(row.user_id).add(row.ticker);
       }
       
-      // Start quote streams for each user's alert tickers
-      for (const [userId, tickers] of userAlerts) {
-        const symbolsCsv = [...tickers].join(',');
+      // Start streams
+      for (const [userId, tickers] of userTickers) {
         await this.startStreamsForUser(userId, {
-          quotes: [symbolsCsv]
+          quotes: [[...tickers].sort().join(',')]
         });
       }
       
-      logger.info(`[BackgroundStreamManager] Initialized with ${this.streams.size} streams for ${userAlerts.size} users`);
+      logger.info(`[BackgroundStreamManager] Initialized ${this.streams.size} streams for ${userTickers.size} users`);
     } catch (err) {
-      logger.error('[BackgroundStreamManager] Failed to initialize:', err.message);
+      logger.error('[BackgroundStreamManager] Init failed:', err.message);
       this.isRunning = false;
       throw err;
     }
   }
   
-  /**
-   * Shutdown all streams gracefully
-   */
   async shutdown() {
     logger.info('[BackgroundStreamManager] Shutting down...');
     
-    for (const [key, stream] of this.streams) {
+    for (const stream of this.streams.values()) {
       await stream.stop();
     }
     
@@ -561,17 +467,12 @@ class BackgroundStreamManager {
     logger.info('[BackgroundStreamManager] Shutdown complete');
   }
   
-  /**
-   * Event emitter interface
-   */
   emit(event, data) {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       for (const handler of handlers) {
-        try {
-          handler(data);
-        } catch (err) {
-          logger.error(`[BackgroundStreamManager] Event handler error:`, err.message);
+        try { handler(data); } catch (err) {
+          logger.error(`[BackgroundStreamManager] Handler error:`, err.message);
         }
       }
     }
@@ -586,46 +487,28 @@ class BackgroundStreamManager {
   }
   
   off(event, handler) {
-    const handlers = this.eventHandlers.get(event);
-    if (handlers) {
-      handlers.delete(handler);
-    }
+    this.eventHandlers.get(event)?.delete(handler);
     return this;
   }
   
-  /**
-   * Get status of all streams
-   */
   getStatus() {
-    const streams = [];
-    for (const [key, stream] of this.streams) {
-      streams.push(stream.getStatus());
-    }
-    
     return {
       isRunning: this.isRunning,
       totalStreams: this.streams.size,
-      streams
+      streams: [...this.streams.values()].map(s => s.getStatus())
     };
   }
   
-  /**
-   * Get health history from database
-   */
   async getHealthHistory(options = {}) {
-    const { userId, streamType, hours = 24, limit = 1500 } = options;
+    const { userId, streamType, hours = 24, limit = 1000 } = options;
     
-    let query = `
-      SELECT * FROM stream_health_logs 
-      WHERE logged_at > NOW() - INTERVAL '${hours} hours'
-    `;
+    let query = `SELECT * FROM stream_health_logs WHERE logged_at > NOW() - INTERVAL '${hours} hours'`;
     const params = [];
     
     if (userId) {
       params.push(userId);
       query += ` AND user_id = $${params.length}`;
     }
-    
     if (streamType) {
       params.push(streamType);
       query += ` AND stream_type = $${params.length}`;
@@ -633,50 +516,8 @@ class BackgroundStreamManager {
     
     query += ` ORDER BY logged_at DESC LIMIT ${limit}`;
     
-    const result = await pool.query(query, params);
-    return result.rows;
-  }
-  
-  /**
-   * Get uptime summary for the last N hours
-   */
-  async getUptimeSummary(hours = 24) {
-    const result = await pool.query(`
-      WITH time_range AS (
-        SELECT NOW() - INTERVAL '${hours} hours' as start_time, NOW() as end_time
-      ),
-      stream_stats AS (
-        SELECT 
-          stream_key,
-          stream_type,
-          user_id,
-          COUNT(*) FILTER (WHERE event_type = 'heartbeat') as heartbeat_count,
-          COUNT(*) FILTER (WHERE event_type = 'reconnect' OR event_type = 'reconnecting') as reconnect_count,
-          COUNT(*) FILTER (WHERE event_type = 'token_expired') as token_expiry_count,
-          COUNT(*) FILTER (WHERE event_type = 'error') as error_count,
-          MIN(logged_at) as first_log,
-          MAX(logged_at) as last_log,
-          MAX(uptime_seconds) as max_uptime_seconds
-        FROM stream_health_logs
-        WHERE logged_at > NOW() - INTERVAL '${hours} hours'
-        GROUP BY stream_key, stream_type, user_id
-      )
-      SELECT 
-        *,
-        -- Expected heartbeats if running continuously (1 per minute)
-        ${hours * 60} as expected_heartbeats,
-        -- Uptime percentage (heartbeats / expected)
-        ROUND(heartbeat_count::numeric / ${hours * 60} * 100, 2) as uptime_percentage
-      FROM stream_stats
-      ORDER BY user_id, stream_type
-    `);
-    
-    return result.rows;
+    return (await pool.query(query, params)).rows;
   }
 }
 
-// Singleton instance
-const manager = new BackgroundStreamManager();
-
-module.exports = manager;
-
+module.exports = new BackgroundStreamManager();
