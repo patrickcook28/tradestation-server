@@ -128,6 +128,9 @@ app.set('views', path.join(__dirname, 'views'));
 app.get('/health', asyncHandler(routes.debugRoutes.health));
 app.get('/status', asyncHandler(routes.debugRoutes.status));
 app.get('/debug', asyncHandler(routes.debugRoutes.debug));
+app.get('/debug/memory', asyncHandler(routes.debugRoutes.memory));
+app.post('/debug/heapsnapshot', asyncHandler(routes.debugRoutes.heapsnapshot));
+app.get('/debug/heap-compare', asyncHandler(routes.debugRoutes.compareHeapSnapshots));
 app.post('/debug/cleanup', asyncHandler(routes.debugRoutes.cleanup));
 
 // Auth routes

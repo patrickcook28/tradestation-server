@@ -8,7 +8,7 @@
  */
 
 class TTLCache {
-  constructor(name = 'cache') {
+  constructor(name = 'cache', cleanupIntervalMs = 300000) { // Default: 5 minutes
     this.name = name;
     /** @type {Map<string, { data: any, cachedAt: number, staleAt: number, meta?: any }>} */
     this.store = new Map();
@@ -16,6 +16,44 @@ class TTLCache {
     this.refreshInFlight = new Map();
     this.hits = 0;
     this.misses = 0;
+    this.evictions = 0;
+    
+    // Auto-cleanup of stale entries to prevent memory leaks
+    if (cleanupIntervalMs > 0) {
+      this.cleanupInterval = setInterval(() => this.evictStale(), cleanupIntervalMs);
+      // Unref so it doesn't keep the process alive
+      if (this.cleanupInterval.unref) {
+        this.cleanupInterval.unref();
+      }
+    }
+  }
+  
+  /** Evict all stale entries from the cache */
+  evictStale() {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, entry] of this.store.entries()) {
+      // Evict entries that are stale for more than 5 minutes
+      if (now >= entry.staleAt + 300000) {
+        this.store.delete(key);
+        evicted++;
+      }
+    }
+    if (evicted > 0) {
+      this.evictions += evicted;
+      console.log(`[TTLCache:${this.name}] Evicted ${evicted} stale entries. Cache size: ${this.store.size}`);
+    }
+    return evicted;
+  }
+  
+  /** Destroy cache and cleanup intervals */
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.store.clear();
+    this.refreshInFlight.clear();
   }
 
   /** Normalize key as string */
@@ -80,6 +118,7 @@ class TTLCache {
       size: this.store.size,
       hits: this.hits,
       misses: this.misses,
+      evictions: this.evictions,
       refreshing: Array.from(this.refreshInFlight.keys()),
       entries
     };

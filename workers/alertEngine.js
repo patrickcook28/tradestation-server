@@ -541,6 +541,8 @@ class AlertEngine {
     
     logger.info(`[AlertEngine] ➖ Removing alert ${alertId} from indexes`);
     
+    const userId = alert.user_id;
+    
     // Remove from symbol index
     const symbol = alert.ticker.toUpperCase();
     const symbolAlerts = this.alertsBySymbol.get(symbol);
@@ -555,9 +557,21 @@ class AlertEngine {
     }
     
     // Remove from user index
-    const userAlerts = this.alertsByUser.get(alert.user_id);
+    const userAlerts = this.alertsByUser.get(userId);
     if (userAlerts) {
       userAlerts.delete(alertId);
+      
+      // MEMORY LEAK FIX: Stop background streams when user has no more alerts
+      if (userAlerts.size === 0) {
+        logger.info(`[AlertEngine] User ${userId} has no more alerts, stopping background streams`);
+        this.alertsByUser.delete(userId);
+        
+        // Stop streams async (don't block)
+        const backgroundStreamManager = require('../utils/backgroundStreamManager');
+        backgroundStreamManager.stopQuoteStreamsForUser(userId).catch(err => {
+          logger.error(`[AlertEngine] Failed to stop streams for user ${userId}:`, err.message);
+        });
+      }
     }
     
     // Remove from ID index

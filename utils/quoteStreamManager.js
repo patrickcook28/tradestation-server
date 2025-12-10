@@ -12,11 +12,14 @@ const mux = new StreamMultiplexer({
   buildRequest: (userId, symbolsCsv) => ({ path: `/marketdata/stream/quotes/${normalizeSymbolsCsv(symbolsCsv)}`, paperTrading: false })
 });
 
+// MEMORY LEAK FIX: Don't use exclusive subscribers for quotes
+// This allows user streams and background alert streams to share the same upstream connection
+// The stream only closes when ALL subscribers (user + background) disconnect
+// This prevents the infinite reconnection loop that was causing memory leaks
 module.exports = { 
   ...mux, 
-  // Default for HTTP clients - exclusive (one stream per user)
-  addSubscriber: mux.addExclusiveSubscriber.bind(mux),
-  // For background streams - non-exclusive (can coexist with user streams)
+  // Both user streams and background streams use non-exclusive mode
+  addSubscriber: mux.addSubscriber.bind(mux),
   addBackgroundSubscriber: mux.addSubscriber.bind(mux)
 };
 
