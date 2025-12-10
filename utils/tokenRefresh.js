@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const pool = require('../db');
 const { decryptToken, updateAccessToken } = require('./secureCredentials');
-const { getFetchOptionsWithAgent } = require('./httpAgent');
 
 // Ensures only one refresh per user runs at a time across all managers
 const inFlightRefresh = new Map(); // userId -> Promise<{access_token, expires_at}>
@@ -30,11 +29,11 @@ async function refreshAccessTokenForUserLocked(userId) {
       'client_secret': process.env.TRADESTATION_CLIENT_SECRET,
       'refresh_token': oauthCredentials.refresh_token
     };
-    const response = await fetch(token_url, getFetchOptionsWithAgent(token_url, {
+    const response = await fetch(token_url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
-    }));
+    });
     if (!response.ok) {
       const status = response.status;
       const text = await response.text();

@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const { buildUrl, getUserAccessToken } = require('./tradestationProxy');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
-const { getFetchOptionsWithAgent } = require('./httpAgent');
 const logger = require('../config/logging');
 
 class StreamMultiplexer {
@@ -89,8 +88,19 @@ class StreamMultiplexer {
       logger.debug(`[${this.name}] [${openAttemptTime}] Opening upstream for key=${key} url=${url}`);
       const fetchStartTime = Date.now();
       
-      // Use 30 second timeout for initial connection (TradeStation can be slow)
-      upstream = await fetch(url, getFetchOptionsWithAgent(url, { method: 'GET', headers: { 'Authorization': `Bearer ${accessToken}` } }, 30000));
+      // Native fetch with AbortController for timeout (TradeStation can be slow)
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 30000);
+      
+      try {
+        upstream = await fetch(url, { 
+          method: 'GET', 
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+          signal: abortController.signal
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       
       const now = new Date().toISOString();
       logger.debug(`[${this.name}] [${now}] ✅ TradeStation API responded (status: ${upstream.status}) for key=${key}`);
@@ -99,11 +109,25 @@ class StreamMultiplexer {
         try {
           await refreshAccessTokenForUserLocked(userId);
           logger.debug(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
-          upstream = await fetch(url, getFetchOptionsWithAgent(url, { method: 'GET', headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` } }, 15000));
+          
+          const retryAbortController = new AbortController();
+          const retryTimeout = setTimeout(() => retryAbortController.abort(), 15000);
+          try {
+            upstream = await fetch(url, { 
+              method: 'GET', 
+              headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` },
+              signal: retryAbortController.signal
+            });
+          } finally {
+            clearTimeout(retryTimeout);
+          }
         } catch (_) {}
       }
     } catch (networkErr) {
-      const err = { __error: true, status: 502, response: { error: 'Bad Gateway', details: networkErr && networkErr.message }, message: 'Upstream fetch failed' };
+      const isTimeout = networkErr.name === 'AbortError';
+      const status = isTimeout ? 504 : 502;
+      const errorType = isTimeout ? 'Gateway Timeout' : 'Bad Gateway';
+      const err = { __error: true, status, response: { error: errorType, details: networkErr && networkErr.message }, message: `Upstream fetch failed: ${errorType}` };
       try { rejectLock(err); } catch (_) {}
       this.pendingOpens.delete(key);
       return err;

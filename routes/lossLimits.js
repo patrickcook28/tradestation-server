@@ -127,6 +127,12 @@ router.post('/', authenticateToken, async (req, res) => {
       }
       // Existing lock is expired, delete it
       await pool.query('DELETE FROM loss_limit_locks WHERE id = $1', [existing.id]);
+      
+      // Notify PositionLossEngine of deleted lock (real-time cache update)
+      const positionLossEngine = require('../workers/positionLossEngine');
+      if (positionLossEngine && positionLossEngine.isRunning) {
+        positionLossEngine.removeLossLimit(req.user.id, accountId.trim(), limitType);
+      }
     }
     
     // Insert new lock
@@ -137,7 +143,21 @@ router.post('/', authenticateToken, async (req, res) => {
       [req.user.id, accountId.trim(), limitType, parseFloat(thresholdAmount), finalExpiresAt]
     );
     
-    res.status(201).json({ success: true, lock: insertResult.rows[0] });
+    const newLock = insertResult.rows[0];
+    
+    // Notify PositionLossEngine of new lock (real-time cache update)
+    const positionLossEngine = require('../workers/positionLossEngine');
+    if (positionLossEngine && positionLossEngine.isRunning) {
+      await positionLossEngine.addOrUpdateLossLimit(
+        req.user.id,
+        accountId.trim(),
+        limitType,
+        parseFloat(thresholdAmount),
+        finalExpiresAt
+      );
+    }
+    
+    res.status(201).json({ success: true, lock: newLock });
   } catch (err) {
     console.error('[LossLimits] Error creating lock:', err);
     if (err.code === '23505') {
@@ -176,6 +196,12 @@ router.delete('/admin/locks/:id', authenticateToken, async (req, res) => {
     
     // Delete the lock
     await pool.query('DELETE FROM loss_limit_locks WHERE id = $1', [lockId]);
+    
+    // Notify PositionLossEngine of deleted lock (real-time cache update)
+    const positionLossEngine = require('../workers/positionLossEngine');
+    if (positionLossEngine && positionLossEngine.isRunning) {
+      positionLossEngine.removeLossLimit(lock.user_id, lock.account_id, lock.limit_type);
+    }
     
     console.log(`[LossLimits] Admin deleted lock ${lockId} for user ${lock.user_id}, account ${lock.account_id}, type ${lock.limit_type}`);
     
@@ -272,8 +298,23 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       });
     }
     
+    // Get lock info before deleting (for cache update)
+    const lockInfo = await pool.query(
+      'SELECT account_id, limit_type FROM loss_limit_locks WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
+    
     // Delete the lock
     await pool.query('DELETE FROM loss_limit_locks WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    
+    // Notify PositionLossEngine of deleted lock (real-time cache update)
+    if (lockInfo.rows.length > 0) {
+      const lock = lockInfo.rows[0];
+      const positionLossEngine = require('../workers/positionLossEngine');
+      if (positionLossEngine && positionLossEngine.isRunning) {
+        positionLossEngine.removeLossLimit(req.user.id, lock.account_id, lock.limit_type);
+      }
+    }
     
     res.status(204).send();
   } catch (err) {
@@ -334,7 +375,7 @@ router.get('/alerts/pending', authenticateToken, async (req, res) => {
       `SELECT id, account_id, alert_type, threshold_amount, loss_amount, position_snapshot,
               detected_at, lockout_expires_at, created_at
        FROM loss_limit_alerts
-       WHERE user_id = $1 AND acknowledged_at IS NULL
+       WHERE user_id = $1 AND acknowledged_at IS NULL AND archived_at IS NULL
        ORDER BY detected_at DESC`,
       [req.user.id]
     );
@@ -354,6 +395,101 @@ router.get('/alerts/pending', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('[LossLimits] Error fetching pending alerts:', err);
     res.status(500).json({ success: false, error: 'Failed to fetch pending alerts' });
+  }
+});
+
+/**
+ * GET /loss_limits/alerts
+ * Get all loss limit alerts (including history) for the authenticated user
+ * Query params: alertType (optional), limit (optional, default 100), includeArchived (optional, default false)
+ */
+router.get('/alerts', authenticateToken, async (req, res) => {
+  try {
+    const alertType = req.query.alertType; // 'daily' or 'trade'
+    const limit = parseInt(req.query.limit) || 100;
+    const includeArchived = req.query.includeArchived === 'true';
+    
+    let query = `
+      SELECT id, account_id, alert_type, threshold_amount, loss_amount, position_snapshot,
+             detected_at, lockout_expires_at, acknowledged_at, user_action, archived_at, created_at
+      FROM loss_limit_alerts
+      WHERE user_id = $1
+    `;
+    const params = [req.user.id];
+    
+    if (alertType) {
+      query += ` AND alert_type = $${params.length + 1}`;
+      params.push(alertType);
+    }
+    
+    if (!includeArchived) {
+      query += ` AND archived_at IS NULL`;
+    }
+    
+    query += ` ORDER BY detected_at DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
+    
+    const result = await pool.query(query, params);
+    
+    const alerts = result.rows.map(row => ({
+      id: row.id,
+      accountId: row.account_id,
+      alertType: row.alert_type,
+      thresholdAmount: parseFloat(row.threshold_amount),
+      lossAmount: parseFloat(row.loss_amount),
+      positionSnapshot: row.position_snapshot,
+      detectedAt: row.detected_at,
+      lockoutExpiresAt: row.lockout_expires_at,
+      acknowledgedAt: row.acknowledged_at,
+      userAction: row.user_action,
+      archivedAt: row.archived_at
+    }));
+    
+    res.json({ success: true, alerts });
+  } catch (err) {
+    console.error('[LossLimits] Error fetching alerts:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch alerts' });
+  }
+});
+
+/**
+ * PATCH /loss_limits/alerts/:id/archive
+ * Archive a loss limit alert (soft delete for audit trail)
+ */
+router.patch('/alerts/:id/archive', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find and verify ownership
+    const findResult = await pool.query(
+      'SELECT id, archived_at FROM loss_limit_alerts WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
+    
+    if (findResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Alert not found' });
+    }
+    
+    if (findResult.rows[0].archived_at) {
+      return res.status(400).json({ success: false, error: 'Alert already archived' });
+    }
+    
+    // Archive the alert
+    const updateResult = await pool.query(
+      `UPDATE loss_limit_alerts 
+       SET archived_at = NOW()
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, archived_at`,
+      [id, req.user.id]
+    );
+    
+    res.json({ 
+      success: true, 
+      archivedAt: updateResult.rows[0].archived_at
+    });
+  } catch (err) {
+    console.error('[LossLimits] Error archiving alert:', err);
+    res.status(500).json({ success: false, error: 'Failed to archive alert' });
   }
 });
 
@@ -466,7 +602,9 @@ router.post('/alerts/test', authenticateToken, async (req, res) => {
     const pusherClient = getPusher();
     if (pusherClient) {
       try {
-        await pusherClient.trigger(`private-user-${req.user.id}`, 'loss_alert', {
+        // Use public channel for consistency with alerts (no auth required)
+        // TODO: Switch to private-user-{userId} with Pusher auth for production
+        await pusherClient.trigger(`user-${req.user.id}-alerts`, 'loss_alert', {
           alertId: alert.id,
           alertType: alert.alert_type,
           accountId: alert.account_id,

@@ -497,6 +497,150 @@ PrecisionTrader - Trade Smarter
   return { from, to, subject: emailSubject, text, html };
 }
 
+/**
+ * Build position loss alert notification email
+ */
+function buildPositionLossEmail({ to, symbol, accountId, thresholdAmount, lossAmount, positionSnapshot, detectedAt }) {
+  const from = process.env.EMAIL_FROM || 'alerts@precisiontrader.tech';
+  const frontendUrl = 'https://precisiontrader.tech';
+  const emailSubject = `⚠️ Position Loss Alert: ${symbol} exceeds trade loss limit`;
+  
+  const formattedTime = new Date(detectedAt).toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  });
+
+  const quantity = positionSnapshot?.Quantity || 0;
+  const avgPrice = positionSnapshot?.AveragePrice || 0;
+
+  const text = `
+Position Loss Alert
+
+Your ${symbol} position has exceeded your trade loss limit.
+
+Account: ${accountId}
+Symbol: ${symbol}
+Position: ${quantity} shares @ $${parseFloat(avgPrice).toFixed(2)} avg
+Your Limit: $${parseFloat(thresholdAmount).toFixed(2)}
+Current Loss: $${parseFloat(lossAmount).toFixed(2)}
+
+Detected At: ${formattedTime}
+
+Consider closing this position to limit further losses.
+
+---
+This is a suggestion only. You can continue trading.
+
+PrecisionTrader - Trade Smarter
+  `.trim();
+
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+  </head>
+  <body style="margin:0;padding:0;background-color:#111827;color:#e6edf3;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#111827;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#151c2b;border-radius:12px;overflow:hidden;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #1f2937;background-color:#151c2b;">
+                <div style="font-weight:600;color:#e6edf3;font-size:18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">⚠️ PrecisionTrader Alerts</div>
+              </td>
+            </tr>
+            <!-- Content -->
+            <tr>
+              <td style="padding:24px;background-color:#151c2b;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <!-- Alert Icon & Symbol -->
+                  <tr>
+                    <td align="center" style="padding-bottom:20px;">
+                      <h2 style="margin:0;color:#e6edf3;font-size:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${symbol}</h2>
+                      <p style="margin:8px 0 0 0;color:#F56565;font-size:16px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Trade Loss Limit Exceeded
+                      </p>
+                    </td>
+                  </tr>
+                  <!-- Position Details -->
+                  <tr>
+                    <td style="background-color:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Account</td>
+                          <td align="right" style="color:#e6edf3;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${accountId}</td>
+                        </tr>
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Position</td>
+                          <td align="right" style="color:#e6edf3;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${quantity} shares @ $${parseFloat(avgPrice).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Your Limit</td>
+                          <td align="right" style="color:#e6edf3;font-weight:600;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">$${parseFloat(thresholdAmount).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Current Loss</td>
+                          <td align="right" style="color:#F56565;font-weight:600;font-size:18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">$${parseFloat(lossAmount).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td colspan="2" style="padding-top:12px;border-top:1px solid #374151;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                              <tr>
+                                <td style="color:#9ca3af;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Detected At</td>
+                                <td align="right" style="color:#e6edf3;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${formattedTime}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <!-- Warning Message -->
+                  <tr>
+                    <td style="padding-bottom:16px;">
+                      <div style="background-color:rgba(245,101,101,0.1);border:1px solid rgba(245,101,101,0.3);border-radius:8px;padding:12px;">
+                        <p style="margin:0;color:#F56565;font-size:14px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                          ⚠️ Your position has exceeded your trade loss limit. Consider closing this position to limit further losses.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                  <!-- Button -->
+                  <tr>
+                    <td align="center" style="padding-top:20px;">
+                      <a href="${frontendUrl}" style="display:inline-block;background-color:#3b82f6;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Open PrecisionTrader</a>
+                    </td>
+                  </tr>
+                  <!-- Footer Text -->
+                  <tr>
+                    <td align="center" style="padding-top:20px;">
+                      <p style="margin:0;color:#9ca3af;font-size:12px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        This is a suggestion only. You can continue trading.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+
+  return { from, to, subject: emailSubject, text, html };
+}
+
 module.exports = { 
   createTransport, 
   buildResetEmail, 
@@ -504,7 +648,8 @@ module.exports = {
   buildContactConfirmationEmail,
   buildBugReportNotificationEmail,
   buildBugReportConfirmationEmail,
-  buildPriceAlertEmail
+  buildPriceAlertEmail,
+  buildPositionLossEmail
 };
 
 

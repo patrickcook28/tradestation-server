@@ -118,6 +118,10 @@ class BackgroundStream {
     this.startedAt = null;
     this.lastDataAt = null;
     this.messagesReceived = 0;
+    
+    // CRITICAL: Distinguish between temporary disconnects (should reconnect) 
+    // and permanent stops (user left, alert deleted - should NOT reconnect)
+    this.permanentlyStopped = false;
   }
   
   getKey() {
@@ -138,6 +142,7 @@ class BackgroundStream {
     this.startedAt = new Date();
     this.messagesReceived = 0;
     this.reconnectDelay = 1000;
+    this.permanentlyStopped = false; // Reset on explicit start
     
     await this.connect();
   }
@@ -238,11 +243,20 @@ class BackgroundStream {
     
     if (data.Heartbeat) return;
     
-    this.manager.emit('data', {
+    // Include deps (accountId, paperTrading) in the event for position streams
+    const eventData = {
       userId: this.userId,
       streamType: this.streamType,
       data
-    });
+    };
+    
+    // For positions streams, include account info from deps
+    if (this.streamType === 'positions' && this.deps) {
+      eventData.accountId = this.deps.accountId;
+      eventData.paperTrading = this.deps.paperTrading;
+    }
+    
+    this.manager.emit('data', eventData);
   }
   
   handleEnd() {
@@ -262,6 +276,13 @@ class BackgroundStream {
   }
   
   scheduleReconnect() {
+    // CRITICAL: Do NOT reconnect if stream was permanently stopped
+    // This prevents memory leaks when users close the website or alerts are deleted
+    if (this.permanentlyStopped) {
+      logger.debug(`[BackgroundStream] Stream permanently stopped, not reconnecting: ${this.getKey()}`);
+      return;
+    }
+    
     if (this.status === 'stopped') return;
     if (this.reconnectTimer) return; // Already scheduled
     
@@ -320,8 +341,11 @@ class BackgroundStream {
   }
   
   async stop() {
-    logger.info(`[BackgroundStream] Stopping: ${this.getKey()}`);
+    logger.info(`[BackgroundStream] Stopping permanently: ${this.getKey()}`);
     
+    // Mark as permanently stopped to prevent reconnection
+    // This is critical for preventing memory leaks when users close website or alerts are deleted
+    this.permanentlyStopped = true;
     this.status = 'stopped';
     this.stopHealthLogging();
     

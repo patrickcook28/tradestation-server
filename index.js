@@ -9,6 +9,7 @@ const Sentry = require('@sentry/node');
 const Pusher = require("pusher");
 const backgroundStreamManager = require('./utils/backgroundStreamManager');
 const alertEngine = require('./workers/alertEngine');
+const positionLossEngine = require('./workers/positionLossEngine');
 const logger = require('./config/logging');
 const { authenticateToken } = require('./routes/auth');
 const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
@@ -273,6 +274,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     try {
       await alertEngine.start();
       console.log('[AlertEngine] Started');
+      
+      await positionLossEngine.start();
+      console.log('[PositionLossEngine] Started');
       
       await backgroundStreamManager.initializeFromDatabase();
       console.log('[BackgroundStreams] Initialized');

@@ -4,7 +4,6 @@ const { decryptToken } = require('./secureCredentials');
 const logger = require('../config/logging');
 const { captureException, captureMessage } = require('./errorReporting');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
-const { getFetchOptionsWithAgent } = require('./httpAgent');
 
 const getTradeStationBaseUrl = (paperTrading) => {
   return paperTrading ? 'https://sim-api.tradestation.com/v3' : 'https://api.tradestation.com/v3';
@@ -69,7 +68,7 @@ const tradestationRequest = async (userId, {
   // Optional: simple request logging for future enhancement
   // try { logger && logger.tradestation && logger.tradestation(url); } catch (_) {}
 
-  let response = await fetch(url, getFetchOptionsWithAgent(url, options));
+  let response = await fetch(url, options);
   let text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
@@ -83,7 +82,7 @@ const tradestationRequest = async (userId, {
         ...fetchHeaders,
         'Authorization': `Bearer ${accessToken}`,
       };
-      response = await fetch(url, getFetchOptionsWithAgent(url, { ...options, headers: retryHeaders }));
+      response = await fetch(url, { ...options, headers: retryHeaders });
       text = await response.text();
       try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
     } catch (err) {

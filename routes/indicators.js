@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const { TTLCache } = require('../utils/ttlCache');
 const { authenticateToken } = require('./auth');
-const { getFetchOptionsWithAgent } = require('../utils/httpAgent');
 
 // Allowed indicator functions for v1
 const ALLOWED_FUNCTIONS = new Set(['SMA', 'EMA', 'VWAP', 'BBANDS', 'RSI', 'WMA', 'DEMA', 'TEMA', 'SAR', 'MACD', 'STOCH', 'CCI', 'ADX']);
@@ -139,7 +138,7 @@ async function getIndicator(req, res) {
         indicatorCache.refresh(signature, async () => {
           const params = new URLSearchParams(outgoing);
           const url = `https://www.alphavantage.co/query?${params.toString()}`;
-          const r = await fetch(url, getFetchOptionsWithAgent(url, {}));
+          const r = await fetch(url);
           if (!r.ok) throw new Error(`Alpha Vantage error ${r.status}`);
           const json = await r.json();
           indicatorCache.set(signature, json, ttlMs, { interval: outgoing.interval || 'daily', function: fn });
@@ -152,7 +151,7 @@ async function getIndicator(req, res) {
     // No cache or first time -> fetch and cache
     const params = new URLSearchParams(outgoing);
     const url = `https://www.alphavantage.co/query?${params.toString()}`;
-    const response = await fetch(url, getFetchOptionsWithAgent(url, {}));
+    const response = await fetch(url);
     if (!response.ok) {
       return res.status(response.status).json({ error: 'Alpha Vantage request failed' });
     }

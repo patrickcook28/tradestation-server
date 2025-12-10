@@ -1,6 +1,5 @@
 const fetch = require('node-fetch');
 const logger = require('../config/logging');
-const { getFetchOptionsWithAgent } = require('../utils/httpAgent');
 
 // Map our timeframes to Alpha Vantage intervals
 const timeframeToInterval = {
@@ -41,7 +40,7 @@ const getAlphaVantageIndicatorValue = async (ticker, function_name, timeframe = 
     const url = `https://www.alphavantage.co/query?${params}`;
     logger.debug('Alpha Vantage API call for alert:', url);
 
-    const response = await fetch(url, getFetchOptionsWithAgent(url, {}));
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Alpha Vantage API error: ${response.status}`);
     }

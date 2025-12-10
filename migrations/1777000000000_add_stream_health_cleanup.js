@@ -23,11 +23,12 @@ async function up() {
       $$ LANGUAGE plpgsql;
     `);
 
-    // Create index on logged_at for efficient cleanup
+    // Create index on logged_at for efficient cleanup queries
+    // Note: Partial index with NOW() is not allowed (NOW() is not IMMUTABLE)
+    // Regular index on logged_at is sufficient for DELETE queries
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_stream_health_logs_cleanup 
-      ON stream_health_logs(logged_at) 
-      WHERE logged_at < NOW() - INTERVAL '7 days';
+      CREATE INDEX IF NOT EXISTS idx_stream_health_logs_logged_at 
+      ON stream_health_logs(logged_at);
     `);
 
     // Run initial cleanup
@@ -48,7 +49,7 @@ async function down() {
     console.log('Removing stream_health_logs cleanup...');
 
     await client.query(`
-      DROP INDEX IF EXISTS idx_stream_health_logs_cleanup;
+      DROP INDEX IF EXISTS idx_stream_health_logs_logged_at;
     `);
 
     await client.query(`
