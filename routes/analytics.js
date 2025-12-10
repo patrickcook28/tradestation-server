@@ -30,14 +30,14 @@ router.post('/track', async (req, res) => {
       }
     }
     
-    // Debug logging with more detail
-    console.log('Analytics tracking request:', { 
-      event_type, 
-      session_id: data?.session_id || data?.parameters?.session_id, 
-      has_data: !!data,
-      user_id_from_token: userId,
-      user_id_from_data: data?.parameters?.user_id
-    });
+    // Debug logging disabled for production
+    // console.log('Analytics tracking request:', { 
+    //   event_type, 
+    //   session_id: data?.session_id || data?.parameters?.session_id, 
+    //   has_data: !!data,
+    //   user_id_from_token: userId,
+    //   user_id_from_data: data?.parameters?.user_id
+    // });
 
     // Use user ID from token (most reliable), fallback to data payload
     const finalUserId = userId || data?.parameters?.user_id || null;
@@ -56,12 +56,12 @@ router.post('/track', async (req, res) => {
       created_at: new Date().toISOString()
     };
 
-    // Log the event type being stored for debugging
-    console.log('Storing analytics event:', { 
-      event_type: analyticsRecord.event_type, 
-      user_id: analyticsRecord.user_id,
-      session_id: analyticsRecord.session_id 
-    });
+    // Log the event type being stored for debugging (disabled for production)
+    // console.log('Storing analytics event:', { 
+    //   event_type: analyticsRecord.event_type, 
+    //   user_id: analyticsRecord.user_id,
+    //   session_id: analyticsRecord.session_id 
+    // });
 
     // Store in database
     const query = `
