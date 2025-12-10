@@ -63,9 +63,8 @@ function buildResetEmail({ to, resetUrl }) {
   const html = `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 8px 0;color:#e6edf3;font-size:20px">Reset your password</h2>
@@ -105,9 +104,8 @@ Submitted via PrecisionTrader Contact Form
   const html = `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader Admin</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader Admin</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 16px 0;color:#e6edf3;font-size:20px">
@@ -187,9 +185,8 @@ The PrecisionTrader Team
   const html = isBetaRequest ? `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 8px 0;color:#e6edf3;font-size:20px">🚀 Beta Request Received!</h2>
@@ -217,9 +214,8 @@ The PrecisionTrader Team
   </div>` : `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 8px 0;color:#e6edf3;font-size:20px">Message Received</h2>
@@ -253,7 +249,7 @@ function buildBugReportNotificationEmail({ email, subject, description, userId, 
   const adminEmail = process.env.ADMIN_EMAIL || 'support@precisiontrader.tech';
   const from = process.env.EMAIL_FROM || 'noreply@precisiontrader.tech';
   const emailSubject = `🐛 Bug Report: ${subject}`;
-  const adminUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+  const adminUrl = 'https://precisiontrader.tech';
   const reportUrl = `${adminUrl}/admin/bug-reports/${reportId}`;
   
   const stateSnapshotPreview = stateSnapshot 
@@ -282,9 +278,8 @@ Submitted via PrecisionTrader State Inspector
   const html = `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader Admin</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader Admin</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 16px 0;color:#e6edf3;font-size:20px">
@@ -356,9 +351,8 @@ The PrecisionTrader Team
   const html = `
   <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
     <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${process.env.FRONTEND_URL || ''}/web-app-manifest-192x192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader</div>
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader</div>
       </div>
       <div style="padding:24px">
         <h2 style="margin:0 0 8px 0;color:#e6edf3;font-size:20px">🐛 Bug Report Received</h2>
@@ -393,7 +387,7 @@ The PrecisionTrader Team
  */
 function buildPriceAlertEmail({ to, ticker, alertType, priceLevel, triggeredAt, description }) {
   const from = process.env.EMAIL_FROM || 'alerts@precisiontrader.tech';
-  const frontendUrl = process.env.FRONTEND_URL || 'https://precisiontrader.tech';
+  const frontendUrl = 'https://precisiontrader.tech';
   const direction = alertType === 'above' || alertType === 'cross_above' ? 'crossed above' : 'crossed below';
   const emailSubject = `🚨 Price Alert: ${ticker} ${direction} $${parseFloat(priceLevel).toFixed(2)}`;
   
@@ -421,48 +415,84 @@ PrecisionTrader - Trade Smarter
   `.trim();
 
   const html = `
-  <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
-    <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
-      <div style="padding:20px 24px;border-bottom:1px solid #1f2937;display:flex;align-items:center;gap:12px">
-        <img src="${frontendUrl}/logo192.png" alt="PrecisionTrader" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;border-radius:6px"/>
-        <div style="font-weight:600;color:#e6edf3">PrecisionTrader Alerts</div>
-      </div>
-      <div style="padding:24px">
-        <div style="text-align:center;margin-bottom:20px">
-          <div style="font-size:48px;margin-bottom:8px">🚨</div>
-          <h2 style="margin:0;color:#e6edf3;font-size:24px">${ticker}</h2>
-          <p style="margin:8px 0 0 0;color:${alertType === 'above' ? '#48BB78' : '#F56565'};font-size:16px;font-weight:600">
-            ${direction} $${parseFloat(priceLevel).toFixed(2)}
-          </p>
-        </div>
-        
-        <div style="background:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <span style="color:#9ca3af;font-size:14px">Alert Price</span>
-            <span style="color:#e6edf3;font-weight:600;font-size:18px">$${parseFloat(priceLevel).toFixed(2)}</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="color:#9ca3af;font-size:14px">Triggered At</span>
-            <span style="color:#e6edf3;font-size:14px">${formattedTime}</span>
-          </div>
-          ${description ? `
-          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #374151">
-            <span style="color:#9ca3af;font-size:14px">Note: </span>
-            <span style="color:#e6edf3;font-size:14px">${description}</span>
-          </div>
-          ` : ''}
-        </div>
-
-        <div style="text-align:center;margin-top:20px">
-          <a href="${frontendUrl}" style="display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">Open PrecisionTrader</a>
-        </div>
-
-        <p style="margin:20px 0 0 0;color:#9ca3af;font-size:12px;text-align:center;line-height:1.5">
-          This alert has been deactivated. Log in to re-enable it or create new alerts.
-        </p>
-      </div>
-    </div>
-  </div>`;
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+  </head>
+  <body style="margin:0;padding:0;background-color:#111827;color:#e6edf3;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#111827;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#151c2b;border-radius:12px;overflow:hidden;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #1f2937;background-color:#151c2b;">
+                <div style="font-weight:600;color:#e6edf3;font-size:18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">🚨 PrecisionTrader Alerts</div>
+              </td>
+            </tr>
+            <!-- Content -->
+            <tr>
+              <td style="padding:24px;background-color:#151c2b;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <!-- Alert Icon & Ticker -->
+                  <tr>
+                    <td align="center" style="padding-bottom:20px;">
+                      <h2 style="margin:0;color:#e6edf3;font-size:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${ticker}</h2>
+                      <p style="margin:8px 0 0 0;color:${alertType === 'above' || alertType === 'cross_above' ? '#48BB78' : '#F56565'};font-size:16px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        ${direction} $${parseFloat(priceLevel).toFixed(2)}
+                      </p>
+                    </td>
+                  </tr>
+                  <!-- Alert Details -->
+                  <tr>
+                    <td style="background-color:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Alert Price</td>
+                          <td align="right" style="color:#e6edf3;font-weight:600;font-size:18px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">$${parseFloat(priceLevel).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td style="color:#9ca3af;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Triggered At</td>
+                          <td align="right" style="color:#e6edf3;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${formattedTime}</td>
+                        </tr>
+                        ${description ? `
+                        <tr>
+                          <td colspan="2" style="padding-top:12px;border-top:1px solid #374151;">
+                            <span style="color:#9ca3af;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Note: </span>
+                            <span style="color:#e6edf3;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${description}</span>
+                          </td>
+                        </tr>
+                        ` : ''}
+                      </table>
+                    </td>
+                  </tr>
+                  <!-- Button -->
+                  <tr>
+                    <td align="center" style="padding-top:20px;">
+                      <a href="${frontendUrl}" style="display:inline-block;background-color:#3b82f6;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Open PrecisionTrader</a>
+                    </td>
+                  </tr>
+                  <!-- Footer Text -->
+                  <tr>
+                    <td align="center" style="padding-top:20px;">
+                      <p style="margin:0;color:#9ca3af;font-size:12px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        This alert has been deactivated. Log in to re-enable it or create new alerts.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
 
   return { from, to, subject: emailSubject, text, html };
 }

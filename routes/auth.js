@@ -309,7 +309,7 @@ const getUserSettings = async (req, res) => {
         const userId = req.user.id;
         
         const result = await pool.query(
-            `SELECT max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
+            `SELECT id, email, max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
                     max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
                     trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code,
                     app_settings, account_defaults, cost_basis_data,
@@ -384,6 +384,8 @@ const getUserSettings = async (req, res) => {
         ];
 
         return res.json({
+            id: user.id,
+            email: user.email,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
             emailAlertsEnabled: user.email_alerts_enabled || false,
