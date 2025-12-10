@@ -10,8 +10,11 @@ router.post('/track', async (req, res) => {
   try {
     const { event_type, data, user_agent, referrer, screen_resolution, viewport_size } = req.body;
     
-    // Debug logging
-    console.log('Analytics tracking request:', { event_type, session_id: data?.session_id, has_data: !!data });
+    // Validate event_type is provided
+    if (!event_type) {
+      console.error('Analytics tracking error: event_type is missing', req.body);
+      return res.status(400).json({ error: 'event_type is required' });
+    }
     
     // Extract user info from token if available
     const token = req.headers.authorization?.replace('Bearer ', '');
@@ -26,13 +29,25 @@ router.post('/track', async (req, res) => {
         // Token invalid, continue as anonymous
       }
     }
+    
+    // Debug logging with more detail
+    console.log('Analytics tracking request:', { 
+      event_type, 
+      session_id: data?.session_id || data?.parameters?.session_id, 
+      has_data: !!data,
+      user_id_from_token: userId,
+      user_id_from_data: data?.parameters?.user_id
+    });
+
+    // Use user ID from token (most reliable), fallback to data payload
+    const finalUserId = userId || data?.parameters?.user_id || null;
 
     // Prepare analytics record
     const analyticsRecord = {
-      event_type,
-      user_id: userId,
-      session_id: data.session_id || data.parameters?.session_id || 'unknown_session',
-      event_data: JSON.stringify(data),
+      event_type: event_type, // Ensure it's explicitly set and validated
+      user_id: finalUserId,
+      session_id: data?.session_id || data?.parameters?.session_id || 'unknown_session',
+      event_data: JSON.stringify(data), // Stringify for JSONB storage
       user_agent,
       referrer,
       screen_resolution,
@@ -40,6 +55,13 @@ router.post('/track', async (req, res) => {
       ip_address: req.ip || req.connection.remoteAddress,
       created_at: new Date().toISOString()
     };
+
+    // Log the event type being stored for debugging
+    console.log('Storing analytics event:', { 
+      event_type: analyticsRecord.event_type, 
+      user_id: analyticsRecord.user_id,
+      session_id: analyticsRecord.session_id 
+    });
 
     // Store in database
     const query = `
