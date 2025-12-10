@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
 const logger = require('../config/logging');
 
 // Map our timeframes to Alpha Vantage intervals

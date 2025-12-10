@@ -1,5 +1,5 @@
 const pool = require("../db");
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
 const { getCurrentContractSymbol } = require('../utils/contractSymbols');
 const logger = require('../config/logging');
 const { roundStdDevLevels, roundToTickSize, roundToTwoDecimals } = require('../utils/tickSizeUtils');

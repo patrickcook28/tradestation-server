@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken")
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
 const pool = require("../db");
 const {json} = require("express");
 const { getCommonFuturesContracts, getContractSeries } = require('../utils/contractSymbols');

@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
 const { TTLCache } = require('../utils/ttlCache');
 const { authenticateToken } = require('./auth');
 

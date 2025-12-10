@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
 const pool = require('../db');
 const { decryptToken } = require('./secureCredentials');
 const logger = require('../config/logging');

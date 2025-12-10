@@ -1,4 +1,5 @@
-const fetch = require('node-fetch');
+// Native fetch is available in Node.js 18+
+const { Readable } = require('stream');
 const { buildUrl, getUserAccessToken } = require('./tradestationProxy');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
 const logger = require('../config/logging');
@@ -158,7 +159,8 @@ class StreamMultiplexer {
       }
     } catch (_) {}
 
-    const readable = upstream.body;
+    // Convert Web ReadableStream (from native fetch) to Node.js Readable stream
+    const readable = Readable.fromWeb(upstream.body);
     const state = entry || { key, subscribers: new Set(), upstream: null, readable: null, lastActivityAt: Date.now(), heartbeatTimer: undefined, firstDataSent: false };
     state.upstream = upstream; state.readable = readable; state.lastActivityAt = Date.now();
     this.keyToConnection.set(key, state);
