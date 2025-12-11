@@ -109,18 +109,6 @@ if (logger.isHttpLoggingEnabled && logger.isHttpLoggingEnabled()) {
     next();
   });
 }
-
-// Specific diagnostic log for positions stream route before auth middleware
-app.use((req, res, next) => {
-  try {
-    const path = req.path || req.originalUrl || '';
-    if (typeof path === 'string' && path.startsWith('/tradestation/stream/accounts/') && path.endsWith('/positions')) {
-      console.log(`[Index] Pre-auth positions route hit: ${req.method} ${req.originalUrl}`);
-    }
-  } catch (_) {}
-  next();
-});
-
 // Set up Handlebars as the view engine
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
@@ -130,9 +118,8 @@ app.get('/health', asyncHandler(routes.debugRoutes.health));
 app.get('/status', asyncHandler(routes.debugRoutes.status));
 app.get('/debug', asyncHandler(routes.debugRoutes.debug));
 app.get('/debug/memory', asyncHandler(routes.debugRoutes.memory));
-app.post('/debug/heapsnapshot', asyncHandler(routes.debugRoutes.heapsnapshot));
-app.get('/debug/heap-compare', asyncHandler(routes.debugRoutes.compareHeapSnapshots));
 app.post('/debug/cleanup', asyncHandler(routes.debugRoutes.cleanup));
+app.post('/debug/gc', asyncHandler(routes.debugRoutes.forceGc));
 
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));

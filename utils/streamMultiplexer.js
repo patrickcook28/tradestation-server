@@ -16,7 +16,7 @@ class StreamMultiplexer {
     this.name = name;
     this.makeKey = makeKey;
     this.buildRequest = buildRequest;
-    /** @type {Map<string, { key: string, subscribers: Set<any>, upstream: any, readable: any, lastActivityAt: number, heartbeatTimer?: NodeJS.Timeout }>} */
+    /** @type {Map<string, { key: string, subscribers: Set<any>, upstream: any, webStream: any, readable: any, abortController: AbortController|null, lastActivityAt: number, heartbeatTimer?: NodeJS.Timeout }>} */
     this.keyToConnection = new Map();
     /** @type {Map<string, Promise<void>>} */
     this.pendingOpens = new Map();
@@ -83,25 +83,25 @@ class StreamMultiplexer {
     }
     const url = buildUrl(!!paperTrading, path, query);
 
+    // CORRECT: Use persistent AbortController to control entire stream lifecycle
+    // Must be declared outside try block to be accessible for state storage
+    const connectionAbort = new AbortController();
+    
     let upstream;
     try {
       const openAttemptTime = Date.now();
       logger.debug(`[${this.name}] [${openAttemptTime}] Opening upstream for key=${key} url=${url}`);
       const fetchStartTime = Date.now();
       
-      // Native fetch with AbortController for timeout (TradeStation can be slow)
-      const abortController = new AbortController();
-      const timeout = setTimeout(() => abortController.abort(), 30000);
+      // Combine with timeout signal (AbortSignal.any is Node 18+)
+      const timeoutSignal = AbortSignal.timeout(30000);
+      const combinedSignal = AbortSignal.any([connectionAbort.signal, timeoutSignal]);
       
-      try {
-        upstream = await fetch(url, { 
-          method: 'GET', 
-          headers: { 'Authorization': `Bearer ${accessToken}` },
-          signal: abortController.signal
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      upstream = await fetch(url, { 
+        method: 'GET', 
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+        signal: combinedSignal
+      });
       
       const now = new Date().toISOString();
       logger.debug(`[${this.name}] [${now}] ✅ TradeStation API responded (status: ${upstream.status}) for key=${key}`);
@@ -111,17 +111,15 @@ class StreamMultiplexer {
           await refreshAccessTokenForUserLocked(userId);
           logger.debug(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
           
-          const retryAbortController = new AbortController();
-          const retryTimeout = setTimeout(() => retryAbortController.abort(), 15000);
-          try {
-            upstream = await fetch(url, { 
-              method: 'GET', 
-              headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` },
-              signal: retryAbortController.signal
-            });
-          } finally {
-            clearTimeout(retryTimeout);
-          }
+          // Use same persistent AbortController for retry
+          const retryTimeoutSignal = AbortSignal.timeout(15000);
+          const retrySignal = AbortSignal.any([connectionAbort.signal, retryTimeoutSignal]);
+          
+          upstream = await fetch(url, { 
+            method: 'GET', 
+            headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` },
+            signal: retrySignal
+          });
         } catch (_) {}
       }
     } catch (networkErr) {
@@ -159,10 +157,26 @@ class StreamMultiplexer {
       }
     } catch (_) {}
 
-    // Convert Web ReadableStream (from native fetch) to Node.js Readable stream
-    const readable = Readable.fromWeb(upstream.body);
-    const state = entry || { key, subscribers: new Set(), upstream: null, readable: null, lastActivityAt: Date.now(), heartbeatTimer: undefined, firstDataSent: false };
-    state.upstream = upstream; state.readable = readable; state.lastActivityAt = Date.now();
+    // CRITICAL: Convert Web ReadableStream and store AbortController
+    const webStream = upstream.body;
+    const readable = Readable.fromWeb(webStream);
+    
+    const state = entry || { 
+      key, 
+      subscribers: new Set(), 
+      upstream: null,
+      webStream: null,
+      readable: null,
+      abortController: null,  // CRITICAL: Controls entire fetch connection lifecycle
+      lastActivityAt: Date.now(), 
+      heartbeatTimer: undefined, 
+      firstDataSent: false 
+    };
+    state.upstream = upstream;
+    state.webStream = webStream;
+    state.readable = readable;
+    state.abortController = connectionAbort;  // Store for cleanup
+    state.lastActivityAt = Date.now();
     this.keyToConnection.set(key, state);
 
     readable.on('data', (chunk) => {
@@ -201,20 +215,28 @@ class StreamMultiplexer {
         state.subscribers.clear();
         try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
         
-        // CRITICAL: Aggressively destroy the upstream connection and socket
+        // CRITICAL STEP 1: Abort fetch connection via AbortController
+        // This signals undici to release native buffers immediately
         try {
-          if (state.readable) {
-            if (state.readable.destroy) state.readable.destroy();
-            if (state.readable.close) state.readable.close();
+          if (state.abortController) {
+            logger.debug(`[${this.name}] Aborting fetch connection for key=${key}`);
+            state.abortController.abort(error ? error.message : 'Stream closed');
+            state.abortController = null;
           }
         } catch (_) {}
         
-        // Also destroy the response body if different from readable
+        // CRITICAL STEP 2: Destroy Node.js wrapper stream (after abort)
         try {
-          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
-            if (state.upstream.body.destroy) state.upstream.body.destroy();
-            if (state.upstream.body.close) state.upstream.body.close();
+          if (state.readable && state.readable.destroy) {
+            state.readable.destroy(error);
           }
+        } catch (_) {}
+        
+        // CRITICAL STEP 3: Nullify all references to help GC
+        try {
+          state.webStream = null;
+          state.readable = null;
+          state.upstream = null;
         } catch (_) {}
         
         this.keyToConnection.delete(key);
@@ -299,22 +321,21 @@ class StreamMultiplexer {
         const now = new Date().toISOString();
         logger.debug(`[${this.name}] [${now}] 🧹 Closing upstream (no subscribers) for key=${key}`);
         try { 
-          // Aggressively destroy all streams and underlying connections
-          if (state.readable) {
-            if (state.readable.destroy) state.readable.destroy();
-            if (state.readable.close) state.readable.close();
-            // Destroy the underlying socket if accessible
-            if (state.readable.socket && state.readable.socket.destroy) {
-              state.readable.socket.destroy();
-            }
+          // Abort fetch connection
+          if (state.abortController) {
+            state.abortController.abort('No subscribers remaining');
+            state.abortController = null;
           }
-          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
-            if (state.upstream.body.destroy) state.upstream.body.destroy();
-            if (state.upstream.body.close) state.upstream.body.close();
-            if (state.upstream.body.socket && state.upstream.body.socket.destroy) {
-              state.upstream.body.socket.destroy();
-            }
+          
+          // Destroy wrapper stream
+          if (state.readable && state.readable.destroy) {
+            state.readable.destroy();
           }
+          
+          // Nullify references
+          state.webStream = null;
+          state.readable = null;
+          state.upstream = null;
         } catch (err) {
           logger.error(`[${this.name}] Error destroying upstream for key=${key}:`, err.message);
         }
@@ -447,13 +468,32 @@ class StreamMultiplexer {
     const cleanupPromise = new Promise((resolve) => { resolveCleanup = resolve; });
     this.pendingCleanups.set(key, cleanupPromise);
     
+    // Abort fetch connection
+    try {
+      if (state.abortController) {
+        state.abortController.abort('Force closed');
+        state.abortController = null;
+      }
+    } catch (_) {}
+    
+    // Destroy wrapper stream
     try {
       if (state.readable && state.readable.destroy) state.readable.destroy();
     } catch (_) {}
+    
+    // Close all subscribers
     try {
       for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
     } catch (_) {}
     try { state.subscribers && state.subscribers.clear && state.subscribers.clear(); } catch (_) {}
+    
+    // Nullify references
+    try {
+      state.webStream = null;
+      state.readable = null;
+      state.upstream = null;
+    } catch (_) {}
+    
     this.keyToConnection.delete(key);
     logger.debug(`[${this.name}] Force-closed upstream for key=${key}. Active upstreams=${this.keyToConnection.size}`);
     
@@ -524,14 +564,21 @@ class StreamMultiplexer {
       if (state.subscribers.size === 0 && stale.length > 0) {
         logger.debug(`[${this.name}] 🧹 No subscribers remaining after stale cleanup, closing upstream for key=${key}`);
         try {
-          if (state.readable) {
-            if (state.readable.destroy) state.readable.destroy();
-            if (state.readable.close) state.readable.close();
+          // Abort fetch connection
+          if (state.abortController) {
+            state.abortController.abort('Stale cleanup');
+            state.abortController = null;
           }
-          if (state.upstream && state.upstream.body && state.upstream.body !== state.readable) {
-            if (state.upstream.body.destroy) state.upstream.body.destroy();
-            if (state.upstream.body.close) state.upstream.body.close();
+          
+          // Destroy wrapper stream
+          if (state.readable && state.readable.destroy) {
+            state.readable.destroy();
           }
+          
+          // Nullify references
+          state.webStream = null;
+          state.readable = null;
+          state.upstream = null;
         } catch (_) {}
         this.keyToConnection.delete(key);
         upstreamsDestroyed++;

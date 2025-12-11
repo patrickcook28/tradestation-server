@@ -359,6 +359,13 @@ class AlertEngine {
   async flushPendingWrites() {
     if (this.pendingLogWrites.length === 0) return;
     
+    // MEMORY SAFETY: Cap pending writes to prevent unbounded growth
+    const MAX_PENDING_WRITES = 1000;
+    if (this.pendingLogWrites.length > MAX_PENDING_WRITES) {
+      logger.warn(`[AlertEngine] Dropping ${this.pendingLogWrites.length - MAX_PENDING_WRITES} old alert logs (queue too large)`);
+      this.pendingLogWrites.splice(0, this.pendingLogWrites.length - MAX_PENDING_WRITES);
+    }
+    
     const writes = this.pendingLogWrites.splice(0); // Take all pending writes
     
     try {
@@ -382,8 +389,12 @@ class AlertEngine {
       logger.debug(`[AlertEngine] Flushed ${writes.length} alert logs to database`);
     } catch (error) {
       logger.error(`[AlertEngine] Failed to flush alert logs:`, error.message);
-      // Put writes back for retry
-      this.pendingLogWrites.unshift(...writes);
+      // MEMORY SAFETY: Only retry if queue isn't too large
+      if (this.pendingLogWrites.length < MAX_PENDING_WRITES) {
+        this.pendingLogWrites.unshift(...writes);
+      } else {
+        logger.error(`[AlertEngine] Dropping ${writes.length} failed writes - queue already at capacity`);
+      }
     }
   }
 

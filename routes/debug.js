@@ -9,26 +9,27 @@ const path = require('path');
 // Project root directory for heap snapshots
 const projectRoot = path.join(__dirname, '..');
 
-// Lightweight memory tracking (no overhead)
+// DISABLED: Memory tracking causes memory accumulation
+// Only track memory on-demand via API calls to avoid memory overhead
 const memorySnapshots = [];
-const MAX_SNAPSHOTS = 1000; // Keep last 1000 samples
+const MAX_SNAPSHOTS = 20; // Keep only last 20 samples for recent trends
 
-// Take a snapshot every 30 seconds
-setInterval(() => {
-  const mem = process.memoryUsage();
-  memorySnapshots.push({
-    timestamp: Date.now(),
-    heapUsed: mem.heapUsed,
-    heapTotal: mem.heapTotal,
-    external: mem.external,
-    rss: mem.rss
-  });
-  
-  // Keep only last MAX_SNAPSHOTS
-  if (memorySnapshots.length > MAX_SNAPSHOTS) {
-    memorySnapshots.shift();
-  }
-}, 30000);
+// DISABLED automatic snapshots - only track on API request
+// setInterval(() => {
+//   const mem = process.memoryUsage();
+//   memorySnapshots.push({
+//     timestamp: Date.now(),
+//     heapUsed: mem.heapUsed,
+//     heapTotal: mem.heapTotal,
+//     external: mem.external,
+//     rss: mem.rss
+//   });
+//   
+//   // Keep only last MAX_SNAPSHOTS
+//   if (memorySnapshots.length > MAX_SNAPSHOTS) {
+//     memorySnapshots.shift();
+//   }
+// }, 30000);
 
 /**
  * Deep parse a heap snapshot with detailed object analysis
@@ -271,6 +272,21 @@ const debug = async (req, res) => {
 const memory = async (req, res) => {
   try {
     const mem = process.memoryUsage();
+    
+    // Record snapshot only when API is called (not automatically)
+    memorySnapshots.push({
+      timestamp: Date.now(),
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      external: mem.external,
+      rss: mem.rss
+    });
+    
+    // Keep only last MAX_SNAPSHOTS
+    if (memorySnapshots.length > MAX_SNAPSHOTS) {
+      memorySnapshots.shift();
+    }
+    
     const barsManager = require('../utils/barsStreamManager');
     const quotesManager = require('../utils/quoteStreamManager');
     const ordersManager = require('../utils/ordersStreamManager');
@@ -608,6 +624,63 @@ const cleanup = async (req, res) => {
   }
 };
 
+/**
+ * Force garbage collection
+ * POST /debug/gc
+ * Requires server to be started with --expose-gc flag
+ */
+const forceGc = async (req, res) => {
+  try {
+    if (!global.gc) {
+      return res.status(400).json({ 
+        error: 'GC not available', 
+        message: 'Start server with --expose-gc flag: node --expose-gc index.js'
+      });
+    }
+    
+    const memBefore = process.memoryUsage();
+    
+    // Run GC
+    global.gc();
+    
+    const memAfter = process.memoryUsage();
+    
+    const freed = {
+      heapUsed: ((memBefore.heapUsed - memAfter.heapUsed) / 1024 / 1024).toFixed(2),
+      heapTotal: ((memBefore.heapTotal - memAfter.heapTotal) / 1024 / 1024).toFixed(2),
+      rss: ((memBefore.rss - memAfter.rss) / 1024 / 1024).toFixed(2),
+      external: ((memBefore.external - memAfter.external) / 1024 / 1024).toFixed(2)
+    };
+    
+    console.log('[Debug] Forced GC - Freed:', freed);
+    
+    res.json({
+      message: 'Garbage collection completed',
+      before: {
+        heapUsed: `${(memBefore.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+        heapTotal: `${(memBefore.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+        rss: `${(memBefore.rss / 1024 / 1024).toFixed(2)} MB`,
+        external: `${(memBefore.external / 1024 / 1024).toFixed(2)} MB`
+      },
+      after: {
+        heapUsed: `${(memAfter.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+        heapTotal: `${(memAfter.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+        rss: `${(memAfter.rss / 1024 / 1024).toFixed(2)} MB`,
+        external: `${(memAfter.external / 1024 / 1024).toFixed(2)} MB`
+      },
+      freed: {
+        heapUsed: `${freed.heapUsed} MB`,
+        heapTotal: `${freed.heapTotal} MB`,
+        rss: `${freed.rss} MB`,
+        external: `${freed.external} MB`
+      }
+    });
+  } catch (error) {
+    console.error('Error forcing GC:', error);
+    res.status(500).json({ error: 'Failed to force GC', message: error.message });
+  }
+};
+
 module.exports = {
   health,
   status,
@@ -616,6 +689,7 @@ module.exports = {
   heapsnapshot,
   compareHeapSnapshots,
   heapStats,
-  cleanup
+  cleanup,
+  forceGc
 };
 

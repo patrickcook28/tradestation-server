@@ -16,9 +16,9 @@ const pool = new Pool({
   ssl: {
     rejectUnauthorized: false,
   },
-  // Increase pool size to handle multiple tabs with streaming connections
-  max: 50, // Maximum number of clients in the pool (was 10 default)
-  min: 5,  // Minimum number of clients to keep alive
+  // Optimized pool size for memory efficiency
+  max: 20, // Maximum number of clients (reduced from 50 to save ~120 MB native memory)
+  min: 2,  // Minimum number of clients to keep alive (reduced from 5)
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 10000, // Return error after 10 seconds if no connection available
 });
@@ -47,17 +47,6 @@ pool.on('release', (client) => {
 pool.on('error', (err, client) => {
   console.error('[DB Pool] Unexpected error on idle client', err);
 });
-
-// Log warning when pool is getting full
-const checkPoolCapacity = () => {
-  const usage = pool.totalCount / pool.options.max;
-  if (usage > 0.8 && pool.waitingCount > 0) {
-    console.warn(`[DB Pool] ⚠️  High usage: ${pool.totalCount}/${pool.options.max} connections, ${pool.waitingCount} waiting`);
-  }
-};
-
-// Check pool capacity periodically
-setInterval(checkPoolCapacity, 5000);
 
 // Export method to enable detailed logging
 pool.enableDetailedLogging = () => {

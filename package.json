@@ -8,10 +8,10 @@
   },
   "scripts": {
     "test": "node tests/run_tests.js",
-    "start": "node index.js",
-    "start:caddy": "PORT=5000 node index.js",
-    "server": "nodemon index.js",
-    "server:caddy": "PORT=5000 nodemon index.js",
+    "start": "node --expose-gc index.js",
+    "start:caddy": "PORT=5000 node --expose-gc index.js",
+    "server": "nodemon --expose-gc index.js",
+    "server:caddy": "PORT=5000 nodemon --expose-gc index.js",
     "migrate": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
     "migrate:create": "node-pg-migrate create"

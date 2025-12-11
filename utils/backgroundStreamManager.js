@@ -301,15 +301,17 @@ class BackgroundStream {
   }
   
   startHealthLogging() {
+    // DISABLED: Health logging causes DB writes and memory overhead
+    // Only log critical events (start/stop) not periodic heartbeats
     this.stopHealthLogging();
     
-    this.healthInterval = setInterval(() => {
-      this.logHealth('heartbeat');
-    }, 60000);
+    // this.healthInterval = setInterval(() => {
+    //   this.logHealth('heartbeat');
+    // }, 60000);
     
-    if (this.healthInterval.unref) {
-      this.healthInterval.unref();
-    }
+    // if (this.healthInterval.unref) {
+    //   this.healthInterval.unref();
+    // }
   }
   
   stopHealthLogging() {
@@ -320,19 +322,23 @@ class BackgroundStream {
   }
   
   async logHealth(eventType, details = null) {
+    // DISABLED: Health logging causes unnecessary DB writes and memory overhead
+    // Only log to console for debugging, not to database
     try {
       const uptime = this.startedAt ? Math.floor((Date.now() - this.startedAt.getTime()) / 1000) : 0;
+      logger.debug(`[BackgroundStream] Health event: ${eventType} for ${this.getKey()} (uptime: ${uptime}s)`);
       
-      await pool.query(`
-        INSERT INTO stream_health_logs 
-        (user_id, stream_type, stream_key, status, started_at, uptime_seconds, 
-         event_type, event_details, last_data_at, messages_received)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `, [
-        this.userId, this.streamType, this.getKey(), this.status,
-        this.startedAt, uptime, eventType, details ? JSON.stringify(details) : null,
-        this.lastDataAt, this.messagesReceived
-      ]);
+      // DISABLED: Database logging
+      // await pool.query(`
+      //   INSERT INTO stream_health_logs 
+      //   (user_id, stream_type, stream_key, status, started_at, uptime_seconds, 
+      //    event_type, event_details, last_data_at, messages_received)
+      //   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      // `, [
+      //   this.userId, this.streamType, this.getKey(), this.status,
+      //   this.startedAt, uptime, eventType, details ? JSON.stringify(details) : null,
+      //   this.lastDataAt, this.messagesReceived
+      // ]);
       
       this.messagesReceived = 0;
     } catch (err) {
