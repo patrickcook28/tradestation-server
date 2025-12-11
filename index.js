@@ -40,7 +40,6 @@ const fetchAgent = new Agent({
   pipelining: 0                // Disable HTTP/1.1 pipelining (not needed with HTTP/2)
 });
 setGlobalDispatcher(fetchAgent);
-console.log('[Undici] Configured with HTTP/2 multiplexing: up to 1000 concurrent streams per connection');
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
@@ -279,18 +278,13 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   
   // Auto-start background streams if enabled
   if (process.env.ENABLE_BACKGROUND_STREAMS === 'true') {
-    console.log('[BackgroundStreams] Starting...');
     try {
       await alertEngine.start();
-      console.log('[AlertEngine] Started');
-      
       await positionLossEngine.start();
-      console.log('[PositionLossEngine] Started');
-      
       await backgroundStreamManager.initializeFromDatabase();
-      console.log('[BackgroundStreams] Initialized');
+      console.log('Background services started');
     } catch (err) {
-      console.error('[BackgroundStreams] Failed to initialize:', err.message);
+      console.error('Background services failed to start:', err.message);
     }
   }
 });

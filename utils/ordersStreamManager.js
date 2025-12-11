@@ -9,7 +9,7 @@ const mux = new StreamMultiplexer({
 
 // Add consistent logging and heartbeat to orders stream as well
 const addSubscriber = async (userId, deps, res) => {
-  try { logger && logger.info && logger.info(`[Orders] addSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
+  if (process.env.DEBUG_STREAMS === 'true') try { logger && logger.info && logger.info(`[Orders] addSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
 
   try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
   const heartbeat = setInterval(() => {
@@ -22,7 +22,7 @@ const addSubscriber = async (userId, deps, res) => {
 
 // For background streams - non-exclusive, simpler setup
 const addBackgroundSubscriber = async (userId, deps, res) => {
-  try { logger && logger.info && logger.info(`[Orders] addBackgroundSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
+  if (process.env.DEBUG_STREAMS === 'true') try { logger && logger.info && logger.info(`[Orders] addBackgroundSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
   return mux.addSubscriber(userId, deps, res);
 };
 

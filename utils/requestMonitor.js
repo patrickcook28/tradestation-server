@@ -78,7 +78,7 @@ function trackRequestStart(req, res, next) {
     // Log stream cleanup for debugging
     if (isStreaming) {
       const duration = Date.now() - startTime;
-      logger.debug(`[RequestMonitor] Stream ${requestId} ended (${reason}) after ${duration}ms: ${url}`);
+      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[RequestMonitor] Stream ${requestId} ended (${reason}) after ${duration}ms: ${url}`);
     }
   };
   
@@ -109,7 +109,7 @@ function trackRequestStart(req, res, next) {
       const isStale = res.writableEnded || res.finished || req.destroyed || req.aborted;
       
       if (isStale && activeStreams.has(requestId)) {
-        logger.debug(`[RequestMonitor] ⚠️ Detected stale stream ${requestId} (age: ${age}ms): ${url}`);
+        if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[RequestMonitor] ⚠️ Detected stale stream ${requestId} (age: ${age}ms): ${url}`);
         cleanup('stale-detection');
       }
     }, 60000);

@@ -75,7 +75,6 @@ class PositionLossEngine {
       return;
     }
     
-    logger.info('[PositionLossEngine] Starting...');
     this.isRunning = true;
     
     // Get background stream manager
@@ -95,8 +94,6 @@ class PositionLossEngine {
       await this.loadLossLimits();
       await this.loadMonitoredAccounts();
     }, 60000);
-    
-    logger.info('[PositionLossEngine] Started successfully');
   }
 
   /**
@@ -152,7 +149,7 @@ class PositionLossEngine {
         });
       }
       
-      logger.debug(`[PositionLossEngine] Loaded ${this.lossLimitsCache.size} active loss limit locks into cache`);
+      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Loaded ${this.lossLimitsCache.size} active loss limit locks into cache`);
       
     } catch (error) {
       logger.error('[PositionLossEngine] Failed to load loss limits:', error.message);
@@ -316,7 +313,7 @@ class PositionLossEngine {
       
       this.monitoredAccounts = newMonitoredAccounts;
       
-      logger.debug(`[PositionLossEngine] Monitoring ${this.monitoredAccounts.size} users with max trade loss enabled`);
+      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Monitoring ${this.monitoredAccounts.size} users with max trade loss enabled`);
       
     } catch (error) {
       logger.error('[PositionLossEngine] Failed to load monitored accounts:', error.message);

@@ -4,6 +4,9 @@ const { buildUrl, getUserAccessToken } = require('./tradestationProxy');
 const { refreshAccessTokenForUserLocked } = require('./tokenRefresh');
 const logger = require('../config/logging');
 
+// Only log verbose stream details if DEBUG_STREAMS=true
+const VERBOSE_LOGGING = process.env.DEBUG_STREAMS === 'true';
+
 class StreamMultiplexer {
   /**
    * @param {{
@@ -49,11 +52,11 @@ class StreamMultiplexer {
     }
     
     try {
-      logger.debug(`[${this.name}] Aborting fetch connection for key=${key} (${reason})`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Aborting fetch connection for key=${key} (${reason})`);
       state.abortController.abort(reason);
     } catch (abortErr) {
       // Ignore abort errors - connection may already be destroyed by undici
-      logger.debug(`[${this.name}] Abort error (ignored) for key=${key}:`, abortErr.message);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Abort error (ignored) for key=${key}:`, abortErr.message);
     } finally {
       state.abortController = null;
     }
@@ -66,26 +69,26 @@ class StreamMultiplexer {
     // This ensures we always get fresh data from TradeStation, not mid-stream
     const pendingCleanup = this.pendingCleanups.get(key);
     if (pendingCleanup) {
-      logger.debug(`[${this.name}] Waiting for cleanup to complete for key=${key} before opening new stream...`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Waiting for cleanup to complete for key=${key} before opening new stream...`);
       try { await pendingCleanup; } catch (_) {}
-      logger.debug(`[${this.name}] Cleanup complete for key=${key}, proceeding with fresh stream open`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Cleanup complete for key=${key}, proceeding with fresh stream open`);
     }
     
     const entry = this.keyToConnection.get(key);
     if (entry && entry.upstream) {
       const now = new Date().toISOString();
-      logger.debug(`[${this.name}] [${now}] ♻️  Reusing upstream for key=${key}. Subscribers=${entry.subscribers.size}`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Reusing upstream for key=${key}`);
       return entry;
     }
 
     const inFlight = this.pendingOpens.get(key);
     if (inFlight) {
-      logger.debug(`[${this.name}] Awaiting pending upstream open for key=${key} ...`);
-      try { await inFlight; } catch (e) { logger.debug(`[${this.name}] Pending open failed for key=${key}`, e && e.message); }
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Awaiting pending upstream open for key=${key}`);
+      try { await inFlight; } catch (e) { if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Pending open failed for key=${key}`, e && e.message); }
       const after = this.keyToConnection.get(key);
       if (after && after.upstream) {
         const now = new Date().toISOString();
-        logger.debug(`[${this.name}] [${now}] ♻️  Reusing just-opened upstream for key=${key}`);
+        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Reusing just-opened upstream for key=${key}`);
         return after;
       }
     }
@@ -119,7 +122,7 @@ class StreamMultiplexer {
     let upstream;
     try {
       const openAttemptTime = Date.now();
-      logger.debug(`[${this.name}] [${openAttemptTime}] Opening upstream for key=${key} url=${url}`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Opening upstream for key=${key}`);
       const fetchStartTime = Date.now();
       
       // Combine with timeout signal (AbortSignal.any is Node 18+)
@@ -133,12 +136,12 @@ class StreamMultiplexer {
       });
       
       const now = new Date().toISOString();
-      logger.debug(`[${this.name}] [${now}] ✅ TradeStation API responded (status: ${upstream.status}) for key=${key}`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] TradeStation API responded (status: ${upstream.status}) for key=${key}`);
       
       if (!upstream.ok && upstream.status === 401) {
         try {
           await refreshAccessTokenForUserLocked(userId);
-          logger.debug(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
+          if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
           
           // Use same persistent AbortController for retry
           const retryTimeoutSignal = AbortSignal.timeout(15000);
@@ -178,7 +181,7 @@ class StreamMultiplexer {
     try {
       const lastKey = this.userToLastKey.get(userId);
       if (lastKey && lastKey !== key) {
-        logger.debug(`[${this.name}] Abandoning stale upstream for key=${key} (lastKey changed to ${lastKey})`);
+        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Abandoning stale upstream for key=${key}`);
         try { upstream.body && upstream.body.destroy && upstream.body.destroy(); } catch (_) {}
         try { resolveLock(); } catch (_) {}
         this.pendingOpens.delete(key);
@@ -216,7 +219,7 @@ class StreamMultiplexer {
         if (!state.firstDataSent) {
           state.firstDataSent = true;
           const now = new Date().toISOString();
-          logger.debug(`[${this.name}] [${now}] 📤 First data sent to ${state.subscribers.size} client(s) for key=${key}`);
+          if (VERBOSE_LOGGING) logger.debug(`[${this.name}] First data sent for key=${key}`);
         }
         
         // Use setImmediate to avoid blocking the event loop when broadcasting to many subscribers
@@ -239,7 +242,7 @@ class StreamMultiplexer {
         if (error) {
           logger.error(`[${this.name}] Upstream error for key=${key}:`, error);
         }
-        logger.debug(`[${this.name}] Upstream closing for key=${key}. Closing ${state.subscribers.size} subscriber(s).`);
+        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Upstream closing for key=${key}`);
         for (const res of state.subscribers) { try { res.end(); } catch (_) {} }
         state.subscribers.clear();
         try { if (state.heartbeatTimer) clearInterval(state.heartbeatTimer); } catch (_) {}
@@ -263,7 +266,7 @@ class StreamMultiplexer {
         } catch (_) {}
         
         this.keyToConnection.delete(key);
-        logger.debug(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
+        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Active upstreams: ${this.keyToConnection.size}`);
       } catch (cleanupError) {
         logger.error(`[${this.name}] Error during cleanup for key=${key}:`, cleanupError);
       }
@@ -323,7 +326,7 @@ class StreamMultiplexer {
     // Add the new subscriber (supports multiple concurrent subscribers per key)
     state.subscribers.add(res);
     const now = new Date().toISOString();
-    logger.debug(`[${this.name}] [${now}] ✅ Subscriber added for userId=${userId}, key=${key}. Subscribers=${state.subscribers.size}. Active upstreams=${this.keyToConnection.size} [connId=${connectionId}]`);
+    if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Subscriber added for userId=${userId}, key=${key}`);
     
     // If joining an existing stream that has already sent data, notify the client to fetch historical data
     if (isJoiningExistingStream) {
@@ -331,7 +334,7 @@ class StreamMultiplexer {
       
       try {
         res.write(lateJoinerNotification);
-        logger.debug(`[${this.name}] [${now}] 📢 Sent late joiner notification to subscriber for key=${key} [connId=${connectionId}]`);
+        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Sent late joiner notification for key=${key}`);
       } catch (writeErr) {
         logger.error(`[${this.name}] Failed to send late joiner notification for key=${key}:`, writeErr.message);
       }
@@ -345,10 +348,8 @@ class StreamMultiplexer {
       const wasInSet = state.subscribers.has(res);
       try { state.subscribers.delete(res); } catch (_) {}
       
-      if (wasInSet) {
-        const now = new Date().toISOString();
-        const duration = Date.now() - (res._subscribedAt || 0);
-        logger.debug(`[${this.name}] [${now}] 🔌 Subscriber disconnected (${reason || 'close'}) for userId=${userId}, key=${key}. Remaining=${state.subscribers.size} [connId=${connectionId}, duration=${duration}ms]`);
+      if (wasInSet && VERBOSE_LOGGING) {
+        logger.debug(`[${this.name}] Subscriber disconnected (${reason}) for userId=${userId}, remaining=${state.subscribers.size}`);
       }
       
       if (state.subscribers.size === 0) {
