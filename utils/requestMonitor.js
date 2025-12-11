@@ -119,60 +119,6 @@ function trackRequestStart(req, res, next) {
 }
 
 /**
- * Get HTTP agent socket status
- */
-function getHttpAgentStatus() {
-  try {
-    const { httpAgent, httpsAgent } = require('./httpAgent');
-    
-    // Get socket counts for each host
-    const httpsSockets = {};
-    const httpFreeSockets = {};
-    const httpsRequests = {};
-    
-    // Count active sockets by host
-    if (httpsAgent.sockets) {
-      Object.keys(httpsAgent.sockets).forEach(host => {
-        httpsSockets[host] = httpsAgent.sockets[host].length;
-      });
-    }
-    
-    // Count free sockets by host
-    if (httpsAgent.freeSockets) {
-      Object.keys(httpsAgent.freeSockets).forEach(host => {
-        httpFreeSockets[host] = httpsAgent.freeSockets[host].length;
-      });
-    }
-    
-    // Count pending requests by host
-    if (httpsAgent.requests) {
-      Object.keys(httpsAgent.requests).forEach(host => {
-        httpsRequests[host] = httpsAgent.requests[host].length;
-      });
-    }
-    
-    // Note: maxSockets might show as null in some Node versions, but the actual value is stored in options
-    const maxSockets = httpsAgent.maxSockets !== undefined ? httpsAgent.maxSockets : 
-                       (httpsAgent.options && httpsAgent.options.maxSockets !== undefined ? httpsAgent.options.maxSockets : 'unknown');
-    
-    return {
-      maxSockets: maxSockets,
-      maxFreeSockets: httpsAgent.maxFreeSockets,
-      sockets: httpsSockets,
-      freeSockets: httpFreeSockets,
-      requests: httpsRequests,
-      totalActiveSockets: Object.values(httpsSockets).reduce((a, b) => a + b, 0),
-      totalFreeSockets: Object.values(httpFreeSockets).reduce((a, b) => a + b, 0),
-      totalPendingRequests: Object.values(httpsRequests).reduce((a, b) => a + b, 0),
-      // Verification: If we have >5 sockets to same host, the fix is working
-      isUnlimited: Object.values(httpsSockets).some(count => count > 5),
-    };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
-
-/**
  * Get current server status including active requests and resource usage
  */
 async function getServerStatus() {
@@ -210,9 +156,6 @@ async function getServerStatus() {
     dbStatus = { error: err.message };
   }
   
-  // Get HTTP agent status
-  const httpAgentStatus = getHttpAgentStatus();
-  
   return {
     timestamp: new Date().toISOString(),
     activeStreams: {
@@ -224,7 +167,6 @@ async function getServerStatus() {
       requests: nonStreamRequests.slice(0, 10), // Top 10 non-streaming requests
     },
     database: dbStatus,
-    httpAgent: httpAgentStatus,
     process: {
       uptime: process.uptime(),
       memory: process.memoryUsage(),
@@ -242,21 +184,6 @@ async function logServerStatus() {
   logger.debug('\n=== Server Status ===');
   logger.debug(`Active Streams: ${status.activeStreams.total}`);
   logger.debug(`Active Requests: ${status.activeRequests.total}`);
-  
-  if (status.httpAgent && !status.httpAgent.error) {
-    logger.debug(`\nHTTP Connections:`);
-    const maxSocketsDisplay = status.httpAgent.maxSockets === Infinity ? 'Unlimited ✓' : 
-                              status.httpAgent.maxSockets === null ? 'Unknown' : 
-                              status.httpAgent.maxSockets;
-    logger.debug(`- Max Sockets: ${maxSocketsDisplay}`);
-    logger.debug(`- Active Sockets: ${status.httpAgent.totalActiveSockets}`);
-    logger.debug(`- Free Sockets: ${status.httpAgent.totalFreeSockets}`);
-    logger.debug(`- Pending Requests: ${status.httpAgent.totalPendingRequests}`);
-    
-    if (status.httpAgent.totalPendingRequests > 0) {
-      logger.debug(`  ⚠️  WARNING: ${status.httpAgent.totalPendingRequests} requests waiting for socket!`);
-    }
-  }
   
   if (status.database && !status.database.error) {
     logger.debug(`\nDatabase Pool:`);
@@ -302,14 +229,13 @@ async function statusEndpoint(req, res) {
  * Periodically log status (disabled by default - streams are long-running by design)
  */
 function startPeriodicMonitoring(intervalMs = 60000) {
-  // Only log if there are issues (like pending socket requests or high DB wait count)
+  // Only log if there are issues (like high DB wait count or too many streams)
   setInterval(async () => {
     const status = await getServerStatus();
-    const hasPendingSockets = status.httpAgent && status.httpAgent.totalPendingRequests > 0;
     const hasDbWaiting = status.database && status.database.waitingRequests > 0;
     const tooManyStreams = status.activeStreams.total > 20; // More than 20 concurrent streams might indicate a leak
     
-    if (hasPendingSockets || hasDbWaiting || tooManyStreams) {
+    if (hasDbWaiting || tooManyStreams) {
       await logServerStatus();
     }
   }, intervalMs);

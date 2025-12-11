@@ -30,6 +30,35 @@ class StreamMultiplexer {
     this.userToLastKey = new Map();
   }
 
+  /**
+   * Safely abort a fetch connection, handling race conditions where the connection
+   * may already be destroyed. This prevents the "Cannot read properties of null" error.
+   * @param {object} state - The connection state object
+   * @param {string} key - The connection key (for logging)
+   * @param {string} reason - The reason for aborting
+   */
+  _safeAbort(state, key, reason) {
+    if (!state.abortController) {
+      return;
+    }
+    
+    // Check if already aborted to avoid duplicate abort calls
+    if (state.abortController.signal.aborted) {
+      state.abortController = null;
+      return;
+    }
+    
+    try {
+      logger.debug(`[${this.name}] Aborting fetch connection for key=${key} (${reason})`);
+      state.abortController.abort(reason);
+    } catch (abortErr) {
+      // Ignore abort errors - connection may already be destroyed by undici
+      logger.debug(`[${this.name}] Abort error (ignored) for key=${key}:`, abortErr.message);
+    } finally {
+      state.abortController = null;
+    }
+  }
+
   async ensureUpstream(userId, deps) {
     const key = this.makeKey(userId, deps);
     
@@ -217,13 +246,7 @@ class StreamMultiplexer {
         
         // CRITICAL STEP 1: Abort fetch connection via AbortController
         // This signals undici to release native buffers immediately
-        try {
-          if (state.abortController) {
-            logger.debug(`[${this.name}] Aborting fetch connection for key=${key}`);
-            state.abortController.abort(error ? error.message : 'Stream closed');
-            state.abortController = null;
-          }
-        } catch (_) {}
+        this._safeAbort(state, key, error ? error.message : 'Stream closed');
         
         // CRITICAL STEP 2: Destroy Node.js wrapper stream (after abort)
         try {
@@ -259,6 +282,10 @@ class StreamMultiplexer {
     // Extract stream epoch from query params for connection tracking
     const streamEpoch = res.req?.query?._epoch || res.req?.headers?.['x-stream-epoch'] || '0';
     const connectionId = `${userId}|${key}|${streamEpoch}|${Date.now()}`;
+    
+    // Check if upstream already exists BEFORE calling ensureUpstream
+    const existingState = this.keyToConnection.get(key);
+    const isJoiningExistingStream = existingState && existingState.upstream && existingState.firstDataSent;
     
     let state;
     try {
@@ -297,6 +324,18 @@ class StreamMultiplexer {
     state.subscribers.add(res);
     const now = new Date().toISOString();
     logger.debug(`[${this.name}] [${now}] ✅ Subscriber added for userId=${userId}, key=${key}. Subscribers=${state.subscribers.size}. Active upstreams=${this.keyToConnection.size} [connId=${connectionId}]`);
+    
+    // If joining an existing stream that has already sent data, notify the client to fetch historical data
+    if (isJoiningExistingStream) {
+      const lateJoinerNotification = JSON.stringify({ LateJoin: true }) + '\n';
+      
+      try {
+        res.write(lateJoinerNotification);
+        logger.debug(`[${this.name}] [${now}] 📢 Sent late joiner notification to subscriber for key=${key} [connId=${connectionId}]`);
+      } catch (writeErr) {
+        logger.error(`[${this.name}] Failed to send late joiner notification for key=${key}:`, writeErr.message);
+      }
+    }
 
     let cleanupDone = false;
     const onClose = (reason) => {
@@ -322,10 +361,7 @@ class StreamMultiplexer {
         logger.debug(`[${this.name}] [${now}] 🧹 Closing upstream (no subscribers) for key=${key}`);
         try { 
           // Abort fetch connection
-          if (state.abortController) {
-            state.abortController.abort('No subscribers remaining');
-            state.abortController = null;
-          }
+          this._safeAbort(state, key, 'No subscribers remaining');
           
           // Destroy wrapper stream
           if (state.readable && state.readable.destroy) {
@@ -469,12 +505,7 @@ class StreamMultiplexer {
     this.pendingCleanups.set(key, cleanupPromise);
     
     // Abort fetch connection
-    try {
-      if (state.abortController) {
-        state.abortController.abort('Force closed');
-        state.abortController = null;
-      }
-    } catch (_) {}
+    this._safeAbort(state, key, 'Force closed');
     
     // Destroy wrapper stream
     try {
@@ -565,10 +596,7 @@ class StreamMultiplexer {
         logger.debug(`[${this.name}] 🧹 No subscribers remaining after stale cleanup, closing upstream for key=${key}`);
         try {
           // Abort fetch connection
-          if (state.abortController) {
-            state.abortController.abort('Stale cleanup');
-            state.abortController = null;
-          }
+          this._safeAbort(state, key, 'Stale cleanup');
           
           // Destroy wrapper stream
           if (state.readable && state.readable.destroy) {

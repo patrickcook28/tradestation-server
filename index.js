@@ -16,6 +16,32 @@ const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
 
 dotenv.config({ path: './.env'});
 
+// Configure undici (native fetch) to use HTTP/2
+// HTTP/2 allows unlimited concurrent streams over a single connection (multiplexing)
+// This scales to any number of users without connection exhaustion
+const { Agent, setGlobalDispatcher } = require('undici');
+const fetchAgent = new Agent({
+  allowH2: true,              // Enable HTTP/2 with multiplexing
+  // Connection pool settings
+  connections: 10,             // Max connections per origin (HTTP/1.1 fallback only)
+  
+  // HTTP/2 specific (unlimited streams per connection)
+  maxConcurrentStreams: 1000,  // Max concurrent streams per HTTP/2 connection (default: 100)
+  
+  // Keep-alive settings (longer is better for HTTP/2 multiplexing)
+  keepAliveTimeout: 300000,    // 5 minutes - keep idle HTTP/2 connections alive longer
+  keepAliveMaxTimeout: 600000, // 10 minutes - max connection lifetime
+  
+  // Timeout settings
+  bodyTimeout: 0,              // No timeout for streaming response bodies (required for streams)
+  headersTimeout: 30000,       // 30s timeout for response headers
+  
+  // HTTP/1.1 settings (if fallback needed)
+  pipelining: 0                // Disable HTTP/1.1 pipelining (not needed with HTTP/2)
+});
+setGlobalDispatcher(fetchAgent);
+console.log('[Undici] Configured with HTTP/2 multiplexing: up to 1000 concurrent streams per connection');
+
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Promise Rejection at:', promise, 'reason:', reason);
@@ -32,17 +58,25 @@ process.on('uncaughtException', (error) => {
   if (logger && logger.error) {
     logger.error('Uncaught Exception:', error);
   }
-  // For uncaught exceptions, we should exit gracefully
+  
+  // Check if this is a known non-fatal undici abort error
+  const isUndiciAbortError = error && error.message && 
+    (error.message.includes("Cannot read properties of null (reading 'servername')") ||
+     error.message.includes('Cannot read properties of undefined') ||
+     error.message.includes('Cannot read properties of null')) &&
+    error.stack && error.stack.includes('undici');
+  
+  if (isUndiciAbortError) {
+    // This is a known race condition in undici when aborting already-closed connections
+    // Log it but don't crash the server
+    console.warn('[Undici] Non-fatal abort error on already-closed connection (ignored)');
+    try { captureException(error, { type: 'uncaughtException-undici-abort', severity: 'warning' }); } catch (_) {}
+    return; // Don't exit
+  }
+  
+  // For other uncaught exceptions, we should exit gracefully
   try { captureException(error, { type: 'uncaughtException' }); } catch (_) {}
   process.exit(1);
-});
-
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID,
-  key: process.env.PUSHER_KEY,
-  secret: process.env.PUSHER_SECRET,
-  cluster: process.env.PUSHER_CLUSTER,
-  useTLS: true
 });
 
 if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
@@ -166,6 +200,7 @@ app.get('/tradestation/accounts/:accountId/orders', authenticateToken, asyncHand
 app.get('/tradestation/accounts/:accountId/historicalorders', authenticateToken, asyncHandler(routes.tradeStationRoutes.getHistoricalOrders));
 app.get('/tradestation/marketdata/symbols/:ticker', authenticateToken, asyncHandler(routes.tradeStationRoutes.getTickerDetails));
 app.get('/tradestation/marketdata/barcharts/:ticker', authenticateToken, asyncHandler(routes.tradeStationRoutes.getBarCharts));
+app.get('/tradestation/marketdata/quotes', authenticateToken, asyncHandler(routes.tradeStationRoutes.getQuoteSnapshots));
 app.post('/tradestation/orders', authenticateToken, asyncHandler(routes.tradeStationRoutes.createOrder));
 app.get('/tradestation/orders/:orderId', authenticateToken, asyncHandler(routes.tradeStationRoutes.getOrder));
 app.put('/tradestation/orders/:orderId', authenticateToken, asyncHandler(routes.tradeStationRoutes.updateOrder));
@@ -241,19 +276,6 @@ const PORT = process.env.PORT || 3001;
 
 const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`Server started on port ${PORT}`);
-  
-  // Periodic idle socket cleanup (every 5 minutes)
-  const { destroyIdleSockets } = require('./utils/httpAgent');
-  setInterval(() => {
-    try {
-      const destroyed = destroyIdleSockets();
-      if (destroyed > 0) {
-        console.log(`[Maintenance] Cleaned up ${destroyed} idle socket(s)`);
-      }
-    } catch (err) {
-      console.error('[Maintenance] Error during idle socket cleanup:', err);
-    }
-  }, 300000);
   
   // Auto-start background streams if enabled
   if (process.env.ENABLE_BACKGROUND_STREAMS === 'true') {

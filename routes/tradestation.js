@@ -397,6 +397,23 @@ const getBarCharts = async (req, res) => {
   });
 };
 
+// Proxy: Market data - quote snapshots (for late joiners to existing streams)
+const getQuoteSnapshots = async (req, res) => {
+  const maint = await getMaintenanceStatus();
+  if (maint.is_enabled) {
+    return res.status(503).json({ error: 'Service unavailable (maintenance mode)', maintenance: maint });
+  }
+  const { symbols } = req.query;
+  if (!symbols || String(symbols).trim().length === 0) {
+    return res.status(400).json({ error: 'symbols query param is required (comma-separated)' });
+  }
+  return respondWithTradestation(req, res, {
+    method: 'GET',
+    path: `/marketdata/quotes/${encodeURIComponent(symbols)}`,
+    paperTrading: false,
+  });
+};
+
 // Proxy: Order execution - create order
 const createOrder = async (req, res) => {
   const maint = await getMaintenanceStatus();
@@ -586,8 +603,10 @@ module.exports = {
   getPositions,
   getOrders,
   getHistoricalOrders,
+  getLocalHistoricalOrders,
   getTickerDetails,
   getBarCharts,
+  getQuoteSnapshots,
   createOrder,
   getOrder,
   updateOrder,

@@ -138,26 +138,26 @@ module.exports = {
       const url = buildUrl(paperTrading, path, query);
 
       // Initiate upstream streaming request
-      let upstream = await fetch(url, getFetchOptionsWithAgent(url, {
+      let upstream = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           ...headers,
         },
-      }));
+      });
 
       // If unauthorized, refresh once and retry
       if (upstream.status === 401) {
         try {
           const refreshed = await refreshAccessTokenForUserLocked(req.user.id);
           accessToken = refreshed.access_token;
-          upstream = await fetch(url, getFetchOptionsWithAgent(url, {
+          upstream = await fetch(url, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${accessToken}`,
               ...headers,
             },
-          }));
+          });
         } catch (err) {
           try { captureException(err, { scope: 'streamTradestation-refresh', path }); } catch (_) {}
           return res.status(401).json({ error: 'Unauthorized' });

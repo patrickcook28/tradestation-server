@@ -596,7 +596,6 @@ const cleanup = async (req, res) => {
     const quotesManager = require('../utils/quoteStreamManager');
     const ordersManager = require('../utils/ordersStreamManager');
     const positionsManager = require('../utils/positionsStreamManager');
-    const { destroyIdleSockets } = require('../utils/httpAgent');
     
     console.log('[Debug] Starting manual stream cleanup...');
     
@@ -607,15 +606,12 @@ const cleanup = async (req, res) => {
       positions: positionsManager.cleanupStaleConnections ? positionsManager.cleanupStaleConnections() : 0
     };
     
-    const socketsDestroyed = destroyIdleSockets();
-    results.idleSocketsDestroyed = socketsDestroyed;
-    
     const total = results.bars + results.quotes + results.orders + results.positions;
     
-    console.log(`[Debug] Cleanup complete: ${total} stale connections, ${socketsDestroyed} idle sockets`);
+    console.log(`[Debug] Cleanup complete: ${total} stale connections`);
     
     res.json({
-      message: `Cleaned up ${total} stale connection(s) and ${socketsDestroyed} idle socket(s)`,
+      message: `Cleaned up ${total} stale connection(s)`,
       details: results
     });
   } catch (error) {
@@ -681,6 +677,10 @@ const forceGc = async (req, res) => {
   }
 };
 
+/**
+ * Check HTTP protocol version being used by undici for TradeStation API
+ * Tests using a simple public endpoint
+ */
 module.exports = {
   health,
   status,

@@ -75,34 +75,6 @@ function displayStatus(status) {
   console.log(`   Active Streams: ${status.activeStreams.total}`);
   console.log(`   Active Requests: ${status.activeRequests.total}`);
   
-  // HTTP Agent (Socket Limit)
-  if (status.httpAgent && !status.httpAgent.error) {
-    console.log('\n🔌 HTTP AGENT (SOCKET LIMIT):');
-    const maxSockets = status.httpAgent.maxSockets === Infinity ? 'Unlimited ✓' : 
-                       status.httpAgent.maxSockets === null ? 'null' : 
-                       status.httpAgent.maxSockets;
-    console.log(`   Max Sockets: ${maxSockets}`);
-    console.log(`   Fix Verified: ${status.httpAgent.isUnlimited ? '✅ YES (>5 sockets active)' : '❌ NO (might still have limit)'}`);
-    console.log(`   Active Sockets: ${status.httpAgent.totalActiveSockets}`);
-    console.log(`   Free Sockets: ${status.httpAgent.totalFreeSockets}`);
-    console.log(`   Pending Requests: ${status.httpAgent.totalPendingRequests}`);
-    
-    if (status.httpAgent.totalPendingRequests > 0) {
-      console.log(`   🔴 SOCKET BOTTLENECK: ${status.httpAgent.totalPendingRequests} requests waiting for socket!`);
-      Object.entries(status.httpAgent.requests).forEach(([host, count]) => {
-        console.log(`      ${host}: ${count} pending`);
-      });
-    }
-    
-    if (status.httpAgent.sockets && Object.keys(status.httpAgent.sockets).length > 0) {
-      console.log(`   Sockets by host:`);
-      Object.entries(status.httpAgent.sockets).forEach(([host, count]) => {
-        const indicator = count > 5 ? '✅' : '  ';
-        console.log(`      ${indicator} ${host}: ${count} active`);
-      });
-    }
-  }
-  
   // Database
   if (status.database && !status.database.error) {
     console.log('\n💾 DATABASE POOL:');
@@ -145,9 +117,6 @@ function displayStatus(status) {
   
   // Warnings
   const warnings = [];
-  if (status.httpAgent && status.httpAgent.totalPendingRequests > 0) {
-    warnings.push(`🔴 ${status.httpAgent.totalPendingRequests} requests waiting for HTTP socket (SOCKET LIMIT ISSUE!)`);
-  }
   if (status.activeStreams && status.activeStreams.total > 20) {
     warnings.push(`⚠️  High stream count: ${status.activeStreams.total} concurrent streams (possible leak?)`);
   }
