@@ -165,6 +165,8 @@ class AlertEngine {
       this.alertsByUser.set(alert.user_id, new Set());
     }
     this.alertsByUser.get(alert.user_id).add(alert.id);
+    
+    logger.info(`[AlertEngine] 📇 Alert ${alert.id} INDEXED: ${symbol} ${alert.alert_type} ${alert.price_level} | Total alerts for ${symbol}: ${this.alertsBySymbol.get(symbol).length}`);
   }
 
   /**
@@ -198,8 +200,11 @@ class AlertEngine {
     // O(1) lookup: Get alerts for this symbol
     const symbolAlerts = this.alertsBySymbol.get(symbol);
     if (!symbolAlerts || symbolAlerts.length === 0) {
+      logger.debug(`[AlertEngine] Quote for ${symbol} @ $${lastPrice.toFixed(2)} | No alerts indexed for this symbol`);
       return; // No alerts for this symbol
     }
+    
+    logger.info(`[AlertEngine] 📊 Quote: ${symbol} = $${lastPrice.toFixed(2)} | Checking ${symbolAlerts.length} alert(s)`);
     
     // O(k) check: Only check alerts for this specific symbol
     for (const alert of symbolAlerts) {
@@ -214,9 +219,20 @@ class AlertEngine {
   checkAlert(alert, currentPrice, quoteData) {
     const shouldTrigger = this.evaluateAlertCondition(alert, currentPrice);
     
+    const priceLevel = parseFloat(alert.price_level);
     if (!shouldTrigger) {
+      logger.debug(`[AlertEngine] Alert ${alert.id}: ${alert.alert_type} $${priceLevel.toFixed(2)} | Current: $${currentPrice.toFixed(2)} | No trigger`);
       return;
     }
+    
+    // Check if already triggered (race condition prevention)
+    if (alert._triggering) {
+      logger.warn(`[AlertEngine] ⚠️ Alert ${alert.id} already triggering, skipping duplicate`);
+      return;
+    }
+    
+    // Mark as triggering immediately to prevent race conditions
+    alert._triggering = true;
     
     logger.info(`[AlertEngine] ✅ Alert ${alert.id} TRIGGERED: ${alert.ticker} ${alert.alert_type} ${alert.price_level}, current: $${currentPrice}`);
     
@@ -466,8 +482,8 @@ class AlertEngine {
   addOrUpdateAlert(alert) {
     logger.info(`[AlertEngine] 📝 addOrUpdateAlert called for alert ${alert.id} | active: ${alert.is_active} | ticker: ${alert.ticker}`);
     
-    // Remove old version if exists
-    this.removeAlert(alert.id);
+    // Remove old version from indexes (but don't stop streams - ensureStreamForAlert will handle consolidation)
+    this.removeAlertFromIndexes(alert.id);
     
     // Add to indexes if active
     if (alert.is_active) {
@@ -478,6 +494,8 @@ class AlertEngine {
       this.ensureStreamForAlert(alert);
     } else {
       logger.info(`[AlertEngine] Alert ${alert.id} is inactive, not indexing`);
+      // Only stop streams if alert is being deactivated
+      this.checkAndStopUserStreamsIfNeeded(alert.user_id);
     }
   }
 
@@ -552,9 +570,9 @@ class AlertEngine {
   }
 
   /**
-   * Remove an alert from indexes
+   * Remove an alert from indexes only (doesn't stop streams)
    */
-  removeAlert(alertId) {
+  removeAlertFromIndexes(alertId) {
     const alert = this.alertsById.get(alertId);
     if (!alert) return;
     
@@ -579,22 +597,43 @@ class AlertEngine {
     const userAlerts = this.alertsByUser.get(userId);
     if (userAlerts) {
       userAlerts.delete(alertId);
-      
-      // MEMORY LEAK FIX: Stop background streams when user has no more alerts
       if (userAlerts.size === 0) {
-        logger.info(`[AlertEngine] User ${userId} has no more alerts, stopping background streams`);
         this.alertsByUser.delete(userId);
-        
-        // Stop streams async (don't block)
-        const backgroundStreamManager = require('../utils/backgroundStreamManager');
-        backgroundStreamManager.stopQuoteStreamsForUser(userId).catch(err => {
-          logger.error(`[AlertEngine] Failed to stop streams for user ${userId}:`, err.message);
-        });
       }
     }
     
     // Remove from ID index
     this.alertsById.delete(alertId);
+  }
+
+  /**
+   * Remove an alert from indexes and stop streams if needed
+   */
+  removeAlert(alertId) {
+    const alert = this.alertsById.get(alertId);
+    if (!alert) return;
+    
+    const userId = alert.user_id;
+    this.removeAlertFromIndexes(alertId);
+    this.checkAndStopUserStreamsIfNeeded(userId);
+  }
+
+  /**
+   * Check if user has any alerts left, stop streams if not
+   */
+  checkAndStopUserStreamsIfNeeded(userId) {
+    const userAlerts = this.alertsByUser.get(userId);
+    
+    // MEMORY LEAK FIX: Stop background streams when user has no more alerts
+    if (!userAlerts || userAlerts.size === 0) {
+      logger.info(`[AlertEngine] User ${userId} has no more alerts, stopping background streams`);
+      
+      // Stop streams async (don't block)
+      const backgroundStreamManager = require('../utils/backgroundStreamManager');
+      backgroundStreamManager.stopQuoteStreamsForUser(userId).catch(err => {
+        logger.error(`[AlertEngine] Failed to stop streams for user ${userId}:`, err.message);
+      });
+    }
   }
 
   /**
