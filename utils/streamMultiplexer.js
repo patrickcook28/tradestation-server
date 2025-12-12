@@ -375,23 +375,30 @@ class StreamMultiplexer {
         }
       }
     } catch (networkErr) {
-      const isTimeout = networkErr.name === 'AbortError' || networkErr.name === 'TimeoutError' || networkErr.message?.includes('timeout');
+      // Better error logging - handle cases where error object is malformed
+      const errMsg = networkErr?.message || String(networkErr) || 'Unknown error';
+      const errName = networkErr?.name || 'UnknownError';
+      const errCode = networkErr?.code || 'NO_CODE';
+      
+      logger.error(`[${this.name}] 🔴 TradeStation API error for key=${key}:`, {
+        message: errMsg,
+        name: errName,
+        code: errCode,
+        url: url,
+        stack: networkErr?.stack,
+        active: this.keyToConnection.size,
+        pending: this.pendingOpensCount
+      });
+      
+      const isTimeout = errName === 'AbortError' || errName === 'TimeoutError' || errMsg.includes('timeout');
       const status = isTimeout ? 504 : 502;
       const errorType = isTimeout ? 'Gateway Timeout' : 'Bad Gateway';
       
-      // ALWAYS log TradeStation API errors (not just in verbose mode)
-      if (!isTimeout) {
-        logger.error(`[${this.name}] 🔴 TradeStation API error for key=${key}: ${networkErr.message} (name: ${networkErr.name}, code: ${networkErr.code}). Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
-        
-        // Special handling for "invalid_argument" - likely rate limit or temporary TradeStation issue
-        if (networkErr.message === 'invalid_argument') {
-          logger.warn(`[${this.name}] ⚠️  TradeStation returned "invalid_argument" - may be rate limited or temporary API issue. Will retry automatically on next attempt.`);
-        }
-      } else {
-        logger.warn(`[${this.name}] ⏱️  Timeout opening upstream for key=${key}. Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
+      if (errMsg === 'invalid_argument') {
+        logger.warn(`[${this.name}] ⚠️  TradeStation returned "invalid_argument" - may be rate limited or temporary API issue.`);
       }
       
-      const err = { __error: true, status, response: { error: errorType, details: networkErr && networkErr.message }, message: `Upstream fetch failed: ${errorType}` };
+      const err = { __error: true, status, response: { error: errorType, details: errMsg }, message: `Upstream fetch failed: ${errorType}` };
       try { rejectLock(err); } catch (_) {}
       
       // Clean up abort controllers
