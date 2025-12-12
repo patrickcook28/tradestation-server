@@ -12,11 +12,11 @@ const getInitialConfig = async (req, res) => {
         const userQuery = `
             SELECT 
                 u.id, u.email, u.superuser, u.beta_user, u.referral_code,
-                u.max_loss_per_day, u.max_loss_per_day_enabled,
-                u.max_loss_per_trade, u.max_loss_per_trade_enabled,
                 u.trade_confirmation as "tradeConfirmation",
                 u.show_tooltips as "showTooltips",
                 u.cost_basis_data,
+                u.account_defaults,
+                u.app_settings,
                 ts.access_token, ts.refresh_token, ts.expires_at,
                 m.is_enabled as maintenance_enabled, m.message as maintenance_message,
                 (SELECT json_agg(ta.*) 
@@ -35,9 +35,47 @@ const getInitialConfig = async (req, res) => {
         if (!userData) {
             throw new Error('User not found');
         }
+        
+        // Get ALL loss limit locks (expired or not) - monitoring continues until explicitly disabled
+        const locksResult = await client.query(`
+            SELECT account_id, limit_type, threshold_amount, expires_at
+            FROM loss_limit_locks
+            WHERE user_id = $1
+        `, [user_id]);
 
         await client.query('COMMIT');
 
+        // Build accountSettings by combining account_defaults with active loss_limit_locks
+        const accountDefaults = userData.account_defaults || {};
+        const accountSettings = {};
+        
+        // Start with account_defaults (risk, riskPercentage, isPaperTrading)
+        for (const [accountId, settings] of Object.entries(accountDefaults)) {
+            accountSettings[accountId] = { ...settings };
+        }
+        
+        // Merge in active loss limits from loss_limit_locks
+        for (const lock of locksResult.rows) {
+            const accountId = lock.account_id;
+            
+            // Ensure account entry exists
+            if (!accountSettings[accountId]) {
+                accountSettings[accountId] = {};
+                // Infer isPaperTrading
+                accountSettings[accountId].isPaperTrading = accountId.startsWith('SIM');
+            }
+            
+            const threshold = parseFloat(lock.threshold_amount);
+            
+            if (lock.limit_type === 'daily') {
+                accountSettings[accountId].maxLossPerDay = threshold;
+                accountSettings[accountId].maxLossPerDayEnabled = true;
+            } else if (lock.limit_type === 'trade') {
+                accountSettings[accountId].maxLossPerPosition = threshold;
+                accountSettings[accountId].maxLossPerPositionEnabled = true;
+            }
+        }
+        
         // Construct the full config object (do not return decrypted TradeStation tokens to the client)
         const config = {
             user: {
@@ -48,15 +86,11 @@ const getInitialConfig = async (req, res) => {
                 referral_code: userData.referral_code,
                 tradeConfirmation: userData.tradeConfirmation,
                 showTooltips: userData.showTooltips,
-                // Expose only a boolean for TS connection status; never return tokens
-                hasTradeStationCredentials: Boolean(userData.access_token)
+                hasTradeStationCredentials: Boolean(userData.access_token),
+                appSettings: userData.app_settings || {},
+                accountSettings: accountSettings  // Renamed from accountDefaults
             },
-            // No credentials object returned to the frontend
             settings: {
-                maxLossPerDay: userData.max_loss_per_day,
-                maxLossPerDayEnabled: userData.max_loss_per_day_enabled,
-                maxLossPerTrade: userData.max_loss_per_trade,
-                maxLossPerTradeEnabled: userData.max_loss_per_trade_enabled,
                 costBasis: userData.cost_basis_data || {},
                 tooltipsEnabled: userData.showTooltips,
                 tradeConfirmationEnabled: userData.tradeConfirmation
@@ -77,9 +111,7 @@ const getInitialConfig = async (req, res) => {
                 orders: [],
                 positions: [],
                 isLoading: false,
-                tickers: [],
-                risk: userData.max_loss_per_trade,
-                riskPercentage: userData.max_loss_per_day
+                tickers: []
             }
         };
 

@@ -309,9 +309,7 @@ const getUserSettings = async (req, res) => {
         const userId = req.user.id;
         
         const result = await pool.query(
-            `SELECT id, email, max_loss_per_day, max_loss_per_day_enabled, max_loss_per_trade, max_loss_per_trade_enabled, 
-                    max_loss_per_day_lock_expires_at, max_loss_per_trade_lock_expires_at,
-                    trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code,
+            `SELECT id, email, trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code,
                     app_settings, account_defaults, cost_basis_data,
                     tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
@@ -324,6 +322,13 @@ const getUserSettings = async (req, res) => {
         }
 
         const user = result.rows[0];
+        
+        // Get ALL loss limit locks (expired or not) - monitoring continues until explicitly disabled
+        const locksResult = await pool.query(`
+            SELECT account_id, limit_type, threshold_amount, expires_at
+            FROM loss_limit_locks
+            WHERE user_id = $1
+        `, [userId]);
 
         // Get subscription status
         const { getSubscriptionStatus } = require('../utils/subscriptionHelpers');
@@ -383,6 +388,37 @@ const getUserSettings = async (req, res) => {
             }))
         ];
 
+        // Build accountSettings by combining account_defaults with active loss_limit_locks
+        const accountDefaults = user.account_defaults || {};
+        const accountSettings = {};
+        
+        // Start with account_defaults (risk, riskPercentage, isPaperTrading)
+        for (const [accountId, settings] of Object.entries(accountDefaults)) {
+            accountSettings[accountId] = { ...settings };
+        }
+        
+        // Merge in active loss limits from loss_limit_locks
+        for (const lock of locksResult.rows) {
+            const accountId = lock.account_id;
+            
+            // Ensure account entry exists
+            if (!accountSettings[accountId]) {
+                accountSettings[accountId] = {};
+                // Infer isPaperTrading
+                accountSettings[accountId].isPaperTrading = accountId.startsWith('SIM');
+            }
+            
+            const threshold = parseFloat(lock.threshold_amount);
+            
+            if (lock.limit_type === 'daily') {
+                accountSettings[accountId].maxLossPerDay = threshold;
+                accountSettings[accountId].maxLossPerDayEnabled = true;
+            } else if (lock.limit_type === 'trade') {
+                accountSettings[accountId].maxLossPerPosition = threshold;
+                accountSettings[accountId].maxLossPerPositionEnabled = true;
+            }
+        }
+
         return res.json({
             id: user.id,
             email: user.email,
@@ -394,7 +430,7 @@ const getUserSettings = async (req, res) => {
             referral_code: user.referral_code,
             hasTradeStationCredentials: user.has_tradestation_credentials === true,
             appSettings: user.app_settings || {},
-            accountDefaults: user.account_defaults || {},
+            accountSettings: accountSettings,  // Renamed from accountDefaults, now combines both sources
             subscriptionStatus: subscriptionStatus,
             costBasisData: user.cost_basis_data || {},
             maintenanceStatus: maintenanceStatus,
@@ -411,40 +447,28 @@ const getUserSettings = async (req, res) => {
     }
 };
 
-// Update user settings (and optionally app_settings/account_defaults)
+// Update user settings (NOTE: Loss limits are managed via /loss_limits endpoint, not here)
 const updateUserSettings = async (req, res) => {
     try {
         const userId = req.user.id;
         const {
-            maxLossPerDay,
-            maxLossPerDayEnabled,
-            maxLossPerDayLockExpiresAt,
-            maxLossPerTrade,
-            maxLossPerTradeEnabled,
-            maxLossPerTradeLockExpiresAt,
             tradeConfirmation,
             showTooltips,
             emailAlertsEnabled,
             appSettings, // JSON object of global user settings (e.g., showStdDevLines, showLiquidity, showOrders, sessionTemplate)
-            accountDefaults, // JSON object keyed by accountId with risk/riskPercentage etc.
+            accountDefaults, // JSON object keyed by accountId with risk/riskPercentage/isPaperTrading (no loss limits here)
         } = req.body;
 
         const result = await pool.query(
             `UPDATE users SET 
-                max_loss_per_day = COALESCE($1, max_loss_per_day),
-                max_loss_per_day_enabled = COALESCE($2, max_loss_per_day_enabled),
-                max_loss_per_day_lock_expires_at = COALESCE($3, max_loss_per_day_lock_expires_at),
-                max_loss_per_trade = COALESCE($4, max_loss_per_trade),
-                max_loss_per_trade_enabled = COALESCE($5, max_loss_per_trade_enabled),
-                max_loss_per_trade_lock_expires_at = COALESCE($6, max_loss_per_trade_lock_expires_at),
-                trade_confirmation = COALESCE($7, trade_confirmation),
-                show_tooltips = COALESCE($8, show_tooltips),
-                email_alerts_enabled = COALESCE($9, email_alerts_enabled),
-                app_settings = COALESCE($10::jsonb, app_settings),
-                account_defaults = COALESCE($11::jsonb, account_defaults)
-            WHERE id = $12
-            RETURNING max_loss_per_day, max_loss_per_day_enabled, max_loss_per_day_lock_expires_at, max_loss_per_trade, max_loss_per_trade_enabled, max_loss_per_trade_lock_expires_at, trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code, app_settings, account_defaults`,
-            [maxLossPerDay, maxLossPerDayEnabled, maxLossPerDayLockExpiresAt, maxLossPerTrade, maxLossPerTradeEnabled, maxLossPerTradeLockExpiresAt, tradeConfirmation, showTooltips, emailAlertsEnabled, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
+                trade_confirmation = COALESCE($1, trade_confirmation),
+                show_tooltips = COALESCE($2, show_tooltips),
+                email_alerts_enabled = COALESCE($3, email_alerts_enabled),
+                app_settings = COALESCE($4::jsonb, app_settings),
+                account_defaults = COALESCE($5::jsonb, account_defaults)
+            WHERE id = $6
+            RETURNING trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code, app_settings, account_defaults`,
+            [tradeConfirmation, showTooltips, emailAlertsEnabled, appSettings ? JSON.stringify(appSettings) : null, accountDefaults ? JSON.stringify(accountDefaults) : null, userId]
         );
 
         if (result.rows.length === 0) {
@@ -452,13 +476,40 @@ const updateUserSettings = async (req, res) => {
         }
 
         const user = result.rows[0];
+        
+        // Get active loss limit locks to merge into response
+        const locksResult = await pool.query(`
+            SELECT account_id, limit_type, threshold_amount, expires_at
+            FROM loss_limit_locks
+            WHERE user_id = $1
+        `, [userId]);
+        
+        // Build accountSettings by combining account_defaults with loss_limit_locks
+        const userAccountDefaults = user.account_defaults || {};
+        const accountSettings = {};
+        
+        for (const [accountId, settings] of Object.entries(userAccountDefaults)) {
+            accountSettings[accountId] = { ...settings };
+        }
+        
+        for (const lock of locksResult.rows) {
+            const accountId = lock.account_id;
+            if (!accountSettings[accountId]) {
+                accountSettings[accountId] = {};
+                accountSettings[accountId].isPaperTrading = accountId.startsWith('SIM');
+            }
+            
+            const threshold = parseFloat(lock.threshold_amount);
+            if (lock.limit_type === 'daily') {
+                accountSettings[accountId].maxLossPerDay = threshold;
+                accountSettings[accountId].maxLossPerDayEnabled = true;
+            } else if (lock.limit_type === 'trade') {
+                accountSettings[accountId].maxLossPerPosition = threshold;
+                accountSettings[accountId].maxLossPerPositionEnabled = true;
+            }
+        }
+        
         return res.json({
-            maxLossPerDay: user.max_loss_per_day || 0,
-            maxLossPerDayEnabled: user.max_loss_per_day_enabled || false,
-            maxLossPerDayLockExpiresAt: user.max_loss_per_day_lock_expires_at,
-            maxLossPerTrade: user.max_loss_per_trade || 0,
-            maxLossPerTradeEnabled: user.max_loss_per_trade_enabled || false,
-            maxLossPerTradeLockExpiresAt: user.max_loss_per_trade_lock_expires_at,
             tradeConfirmation: user.trade_confirmation !== false, // Default to true
             showTooltips: user.show_tooltips !== false, // Default to true
             emailAlertsEnabled: user.email_alerts_enabled || false,
@@ -466,7 +517,7 @@ const updateUserSettings = async (req, res) => {
             beta_user: user.beta_user || false,
             referral_code: user.referral_code,
             appSettings: user.app_settings || {},
-            accountDefaults: user.account_defaults || {},
+            accountSettings: accountSettings, // Combined view with loss limits from locks
         });
     } catch (error) {
         logger.error('Error updating user settings:', error);

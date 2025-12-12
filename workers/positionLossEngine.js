@@ -12,7 +12,7 @@
  * - Maintains in-memory cache of latest position state per account
  * - Uses Pusher for real-time notifications
  * - Logs triggered alerts to database
- * - Dynamically starts/stops streams when max trade loss is enabled/disabled
+ * - Dynamically starts/stops streams when max position loss is enabled/disabled
  */
 
 const pool = require('../db');
@@ -39,7 +39,7 @@ class PositionLossEngine {
     // Only stores the most recent state for each position
     this.positionCache = new Map();
     
-    // Track which users have max trade loss enabled
+    // Track which users have max position loss enabled
     // userId -> Set of accountKeys that need monitoring
     this.monitoredAccounts = new Map();
     
@@ -75,6 +75,7 @@ class PositionLossEngine {
       return;
     }
     
+    logger.info('[PositionLossEngine] Starting position loss monitor...');
     this.isRunning = true;
     
     // Get background stream manager
@@ -86,8 +87,10 @@ class PositionLossEngine {
     // Load loss limits into cache
     await this.loadLossLimits();
     
-    // Load users with max trade loss enabled and start their streams
+    // Load users with max position loss enabled and start their streams
     await this.loadMonitoredAccounts();
+    
+    logger.info(`[PositionLossEngine] ✅ Started successfully. Monitoring ${this.monitoredAccounts.size} user(s) with ${this.lossLimitsCache.size} active loss limit(s)`);
     
     // Periodically reload loss limits and monitored accounts (every 60 seconds)
     this.reloadInterval = setInterval(async () => {
@@ -119,7 +122,8 @@ class PositionLossEngine {
   }
 
   /**
-   * Load all active loss limit locks into memory cache
+   * Load loss limits from loss_limit_locks table (single source of truth)
+   * Monitors ALL locks (expired or not) - expiration only prevents user from changing settings
    */
   async loadLossLimits() {
     try {
@@ -133,23 +137,33 @@ class PositionLossEngine {
           u.account_defaults
         FROM loss_limit_locks l
         JOIN users u ON l.user_id = u.id
-        WHERE l.expires_at > NOW()
+        WHERE l.limit_type = 'trade'
       `);
       
       // Clear existing cache
       this.lossLimitsCache.clear();
       
-      // Build cache
+      // Build cache from ALL locks (expired or not - monitoring continues until explicitly disabled)
       for (const row of result.rows) {
-        const cacheKey = `${row.user_id}|${row.account_id}|${row.limit_type}`;
+        const userId = String(row.user_id);
+        const accountId = row.account_id;
+        const threshold = parseFloat(row.threshold_amount);
+        const accountDefaults = row.account_defaults || {};
+        
+        // Get isPaperTrading from account_defaults
+        const isPaperTrading = accountDefaults[accountId]?.isPaperTrading;
+        
+        // Cache key format: userId|accountId|trade
+        const cacheKey = `${userId}|${accountId}|trade`;
         this.lossLimitsCache.set(cacheKey, {
-          threshold_amount: parseFloat(row.threshold_amount),
+          threshold_amount: threshold,
           expires_at: new Date(row.expires_at),
-          account_defaults: row.account_defaults || {}
+          isPaperTrading: isPaperTrading,
+          isExpired: new Date(row.expires_at) <= new Date()
         });
       }
       
-      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Loaded ${this.lossLimitsCache.size} active loss limit locks into cache`);
+      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Loaded ${this.lossLimitsCache.size} position loss locks into cache (includes expired)`);
       
     } catch (error) {
       logger.error('[PositionLossEngine] Failed to load loss limits:', error.message);
@@ -215,58 +229,57 @@ class PositionLossEngine {
   }
 
   /**
-   * Load users with max trade loss enabled and start/stop streams accordingly
+   * Load users with position loss locks and start/stop streams accordingly
+   * Monitors ALL locks (expired or not) - expiration only affects ability to change settings
    */
   async loadMonitoredAccounts() {
     try {
-      // Get all active trade loss locks
+      // Get ALL position loss locks (expired or not) - monitoring continues until explicitly disabled
       const result = await pool.query(`
-        SELECT DISTINCT 
-          l.user_id, 
+        SELECT 
+          l.user_id,
           l.account_id,
+          l.threshold_amount,
+          l.expires_at,
           u.account_defaults
         FROM loss_limit_locks l
         JOIN users u ON l.user_id = u.id
         WHERE l.limit_type = 'trade'
-          AND l.expires_at > NOW()
       `);
       
-      const newMonitoredAccounts = new Map();
+      const now = new Date();
+      const activeCount = result.rows.filter(r => new Date(r.expires_at) > now).length;
+      const expiredCount = result.rows.filter(r => new Date(r.expires_at) <= now).length;
       
-      // Process each lock
+      logger.info(`[PositionLossEngine] Found ${result.rows.length} position loss lock(s): ${activeCount} active, ${expiredCount} expired`);
+      
+      const newMonitoredAccounts = new Map();
+      let totalAccountsMonitored = 0;
+      
+      // Process ALL locks (monitoring continues even after expiration)
       for (const row of result.rows) {
         const userId = String(row.user_id);
         const accountId = row.account_id;
-        
-        // Determine paper trading mode from account_defaults
-        // We need to check both paper and live accounts
+        const threshold = parseFloat(row.threshold_amount);
         const accountDefaults = row.account_defaults || {};
+        const isExpired = new Date(row.expires_at) <= now;
         
-        // Check both paper and live accounts for this accountId
-        const paperKey = `${accountId}_paper`;
-        const liveKey = `${accountId}_live`;
+        // Get isPaperTrading from account_defaults (stored with risk settings)
+        const isPaper = accountDefaults[accountId]?.isPaperTrading === true;
         
-        const paperEnabled = accountDefaults[paperKey]?.maxLossPerTradeEnabled && 
-                            parseFloat(accountDefaults[paperKey]?.maxLossPerTrade || 0) > 0;
-        const liveEnabled = accountDefaults[liveKey]?.maxLossPerTradeEnabled && 
-                           parseFloat(accountDefaults[liveKey]?.maxLossPerTrade || 0) > 0;
-        
-        if (paperEnabled) {
-          const accountKey = `${userId}|${accountId}|1`;
-          if (!newMonitoredAccounts.has(userId)) {
-            newMonitoredAccounts.set(userId, new Set());
-          }
-          newMonitoredAccounts.get(userId).add(accountKey);
+        const accountKey = `${userId}|${accountId}|${isPaper ? 1 : 0}`;
+        if (!newMonitoredAccounts.has(userId)) {
+          newMonitoredAccounts.set(userId, new Set());
         }
+        newMonitoredAccounts.get(userId).add(accountKey);
+        totalAccountsMonitored++;
         
-        if (liveEnabled) {
-          const accountKey = `${userId}|${accountId}|0`;
-          if (!newMonitoredAccounts.has(userId)) {
-            newMonitoredAccounts.set(userId, new Set());
-          }
-          newMonitoredAccounts.get(userId).add(accountKey);
-        }
+        const status = isExpired ? '(expired, can disable)' : '(locked)';
+        logger.info(`[PositionLossEngine] ✅ Monitoring enabled: User ${userId}, Account ${accountId} (${isPaper ? 'paper' : 'live'}), Threshold: $${threshold.toFixed(2)} ${status}`);
       }
+      
+      logger.info(`[PositionLossEngine] Total accounts with position loss monitoring: ${totalAccountsMonitored}`);
+      
       
       // Start streams for newly monitored accounts
       for (const [userId, accountKeys] of newMonitoredAccounts) {
@@ -295,10 +308,14 @@ class PositionLossEngine {
         const toStop = [...existingKeys].filter(key => !newKeys.has(key));
         
         if (toStop.length > 0) {
-          // We can't stop individual account streams easily, so we'll let them run
-          // They'll be cleaned up when the user has no more monitored accounts
-          // For now, we just remove from monitoring
-          logger.debug(`[PositionLossEngine] User ${userId} no longer needs monitoring for ${toStop.length} account(s)`);
+          // Stop individual position streams for accounts no longer monitored
+          for (const key of toStop) {
+            const [, accountId, paperTrading] = key.split('|');
+            const streamKey = `${userId}|positions|${accountId}|${paperTrading}`;
+            
+            await this.backgroundStreamManager.stopStreamByKey(streamKey);
+            logger.info(`[PositionLossEngine] Stopped stream for account ${accountId} (${paperTrading === '1' ? 'paper' : 'live'})`);
+          }
         }
       }
       
@@ -313,7 +330,7 @@ class PositionLossEngine {
       
       this.monitoredAccounts = newMonitoredAccounts;
       
-      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Monitoring ${this.monitoredAccounts.size} users with max trade loss enabled`);
+      if (process.env.DEBUG_STREAMS === 'true') logger.debug(`[PositionLossEngine] Monitoring ${this.monitoredAccounts.size} users with max position loss enabled`);
       
     } catch (error) {
       logger.error('[PositionLossEngine] Failed to load monitored accounts:', error.message);
@@ -331,6 +348,10 @@ class PositionLossEngine {
     // Extract paperTrading from event if available (added by BackgroundStream)
     const paperTrading = event.paperTrading !== undefined ? event.paperTrading : null;
     const accountId = event.accountId || event.data?.AccountID;
+    
+    if (process.env.DEBUG_STREAMS === 'true' && event.data?.Symbol) {
+      logger.debug(`[PositionLossEngine] 📥 Received position data: ${event.data.Symbol}, User: ${event.userId}, Account: ${accountId}`);
+    }
     
     this.processPositionData(event.userId, event.data, accountId, paperTrading);
   }
@@ -421,7 +442,7 @@ class PositionLossEngine {
       _cachedAt: Date.now() // Use timestamp instead of Date object for memory efficiency
     });
     
-    // Check if this position exceeds max trade loss
+    // Check if this position exceeds max position loss
     // Use .catch() to handle errors since we're not awaiting (to avoid blocking the stream)
     this.checkPositionLoss(userId, accountId, paperTrading, positionData).catch(err => {
       logger.error(`[PositionLossEngine] Unhandled error in checkPositionLoss for ${positionData.Symbol}:`, err.message);
@@ -430,35 +451,27 @@ class PositionLossEngine {
   }
 
   /**
-   * Check if a position exceeds max trade loss limit
+   * Check if a position exceeds max position loss limit
    * Uses cached loss limit data for fast lookup (no database query)
    */
   async checkPositionLoss(userId, accountId, paperTrading, positionData) {
     try {
       const symbol = positionData.Symbol;
       
-      // Get the loss limit from cache (fast lookup, no database query)
+      // Get the position loss lock from cache (fast lookup, no database query)
       const cacheKey = `${userId}|${accountId}|trade`;
       const lock = this.lossLimitsCache.get(cacheKey);
       
       if (!lock) {
-        return; // No active trade loss limit for this account
+        return; // No position loss lock for this account (monitoring not enabled)
       }
       
-      // Check if lock has expired
-      if (lock.expires_at <= new Date()) {
-        // Remove expired lock from cache
-        this.lossLimitsCache.delete(cacheKey);
-        return;
-      }
+      // NOTE: We do NOT skip expired locks - monitoring continues until user explicitly disables
+      // Expiration only prevents user from changing settings, not monitoring
       
-      const accountDefaults = lock.account_defaults || {};
-      const accountKey = `${accountId}_${paperTrading ? 'paper' : 'live'}`;
-      const accountSettings = accountDefaults[accountKey] || {};
-      
-      // Check if max trade loss is enabled for this account
-      if (!accountSettings.maxLossPerTradeEnabled) {
-        return; // Not enabled for this account
+      // Verify isPaperTrading matches (if we have that info)
+      if (lock.isPaperTrading !== undefined && lock.isPaperTrading !== paperTrading) {
+        return; // Paper/live mismatch
       }
       
       const thresholdAmount = lock.threshold_amount;
@@ -500,8 +513,10 @@ class PositionLossEngine {
         return; // Position is in profit or alert already acknowledged
       }
       
-      // Single log per check showing position value and threshold (only when there's a loss)
-      logger.debug(`[PositionLossEngine] ${symbol}: UnrealizedPL=$${unrealizedPL.toFixed(2)}, Loss=$${lossAmount.toFixed(2)}, Threshold=$${thresholdAmount.toFixed(2)}`);
+      // Log position check with clear formatting (similar to AlertEngine)
+      const quantity = positionData.Quantity || 0;
+      const avgPrice = positionData.AveragePrice || 0;
+      logger.debug(`[PositionLossEngine] 📊 Symbol: ${symbol}, Position: ${quantity} @ $${parseFloat(avgPrice).toFixed(2)}, Unrealized P&L: $${unrealizedPL.toFixed(2)}, Loss Limit: $${thresholdAmount.toFixed(2)}`);
       
       // Check if loss exceeds threshold
       if (lossAmount < thresholdAmount) {

@@ -381,11 +381,27 @@ class StreamMultiplexer {
       const errName = networkErr?.name || 'UnknownError';
       const errCode = networkErr?.code || 'NO_CODE';
       
+      // Extract underlying cause from undici errors (where the real error often lives)
+      const cause = networkErr?.cause;
+      const causeMsg = cause?.message;
+      const causeCode = cause?.code;
+      const causeErrno = cause?.errno;
+      const causeAddress = cause?.address;
+      const causePort = cause?.port;
+      
       logger.error(`[${this.name}] 🔴 TradeStation API error for key=${key}:`, {
         message: errMsg,
         name: errName,
         code: errCode,
         url: url,
+        cause: cause ? {
+          message: causeMsg,
+          code: causeCode,
+          errno: causeErrno,
+          address: causeAddress,
+          port: causePort,
+          syscall: cause?.syscall
+        } : undefined,
         stack: networkErr?.stack,
         active: this.keyToConnection.size,
         pending: this.pendingOpensCount

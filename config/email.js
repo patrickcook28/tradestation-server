@@ -503,7 +503,7 @@ PrecisionTrader - Trade Smarter
 function buildPositionLossEmail({ to, symbol, accountId, thresholdAmount, lossAmount, positionSnapshot, detectedAt }) {
   const from = process.env.EMAIL_FROM || 'alerts@precisiontrader.tech';
   const frontendUrl = 'https://precisiontrader.tech';
-  const emailSubject = `⚠️ Position Loss Alert: ${symbol} exceeds trade loss limit`;
+  const emailSubject = `⚠️ Position Loss Alert: ${symbol} exceeds position loss limit`;
   
   const formattedTime = new Date(detectedAt).toLocaleString('en-US', {
     weekday: 'short',
@@ -520,7 +520,7 @@ function buildPositionLossEmail({ to, symbol, accountId, thresholdAmount, lossAm
   const text = `
 Position Loss Alert
 
-Your ${symbol} position has exceeded your trade loss limit.
+Your ${symbol} position has exceeded your position loss limit.
 
 Account: ${accountId}
 Symbol: ${symbol}
@@ -567,7 +567,7 @@ PrecisionTrader - Trade Smarter
                     <td align="center" style="padding-bottom:20px;">
                       <h2 style="margin:0;color:#e6edf3;font-size:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${symbol}</h2>
                       <p style="margin:8px 0 0 0;color:#F56565;font-size:16px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-                        Trade Loss Limit Exceeded
+                        Position Loss Limit Exceeded
                       </p>
                     </td>
                   </tr>
@@ -609,7 +609,7 @@ PrecisionTrader - Trade Smarter
                     <td style="padding-bottom:16px;">
                       <div style="background-color:rgba(245,101,101,0.1);border:1px solid rgba(245,101,101,0.3);border-radius:8px;padding:12px;">
                         <p style="margin:0;color:#F56565;font-size:14px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-                          ⚠️ Your position has exceeded your trade loss limit. Consider closing this position to limit further losses.
+                          ⚠️ Your position has exceeded your position loss limit. Consider closing this position to limit further losses.
                         </p>
                       </div>
                     </td>

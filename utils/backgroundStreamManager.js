@@ -180,6 +180,11 @@ class BackgroundStream {
       return;
     }
     
+    // Allow restart from idle state
+    if (this.status === 'idle') {
+      logger.info(`[BackgroundStream] Restarting idle stream: ${this.getKey()}`);
+    }
+    
     this.startedAt = new Date();
     this.messagesReceived = 0;
     this.reconnectDelay = 1000;
@@ -306,6 +311,18 @@ class BackgroundStream {
     
     logger.info(`[BackgroundStream] Stream ended: ${this.getKey()}`);
     this.stopHealthLogging();
+    
+    // For position streams: if stream ended immediately with no data, 
+    // it likely means there are no open positions. Don't reconnect.
+    if (this.streamType === 'positions') {
+      const timeSinceStart = Date.now() - (this.startedAt?.getTime() || 0);
+      if (timeSinceStart < 5000 && this.messagesReceived === 0) {
+        logger.info(`[BackgroundStream] Position stream ended with no data (no open positions). Not reconnecting: ${this.getKey()}`);
+        this.status = 'idle'; // Idle state - can be restarted but won't auto-reconnect
+        return;
+      }
+    }
+    
     this.scheduleReconnect();
   }
   
@@ -447,10 +464,15 @@ class BackgroundStreamManager {
     
     for (const { accountId, paperTrading } of positions) {
       const key = `${userId}|positions|${accountId}|${paperTrading ? 1 : 0}`;
-      if (!this.streams.has(key)) {
+      const existingStream = this.streams.get(key);
+      
+      if (!existingStream) {
         const stream = new BackgroundStream(this, userId, 'positions', { accountId, paperTrading });
         this.streams.set(key, stream);
         await stream.start();
+      } else if (existingStream.status === 'idle' || existingStream.status === 'stopped') {
+        // Restart idle or stopped streams
+        await existingStream.start();
       }
     }
     
@@ -475,6 +497,17 @@ class BackgroundStreamManager {
     }
     
     logger.info(`[BackgroundStreamManager] Stopped ${toStop.length} streams for user ${userId}`);
+  }
+  
+  async stopStreamByKey(key) {
+    const stream = this.streams.get(key);
+    if (stream) {
+      await stream.stop();
+      this.streams.delete(key);
+      logger.info(`[BackgroundStreamManager] Stopped stream: ${key}`);
+      return true;
+    }
+    return false;
   }
   
   async stopQuoteStreamsForUser(userId) {

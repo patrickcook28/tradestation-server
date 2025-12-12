@@ -145,16 +145,32 @@ router.post('/', authenticateToken, async (req, res) => {
     
     const newLock = insertResult.rows[0];
     
-    // Notify PositionLossEngine of new lock (real-time cache update)
+    // Ensure isPaperTrading is set in account_defaults (for position stream routing)
+    const userResult = await pool.query('SELECT account_defaults FROM users WHERE id = $1', [req.user.id]);
+    const accountDefaults = userResult.rows[0]?.account_defaults || {};
+    
+    // Ensure account entry exists with isPaperTrading flag
+    if (!accountDefaults[accountId.trim()]) {
+      accountDefaults[accountId.trim()] = {};
+    }
+    
+    // Set isPaperTrading if not already set (needed for stream routing)
+    if (accountDefaults[accountId.trim()].isPaperTrading === undefined) {
+      const accountIdTrimmed = accountId.trim();
+      accountDefaults[accountIdTrimmed].isPaperTrading = accountIdTrimmed.startsWith('SIM');
+      
+      // Save updated account_defaults
+      await pool.query(
+        'UPDATE users SET account_defaults = $1 WHERE id = $2',
+        [JSON.stringify(accountDefaults), req.user.id]
+      );
+    }
+    
+    // Notify PositionLossEngine to reload locks (real-time cache update)
     const positionLossEngine = require('../workers/positionLossEngine');
     if (positionLossEngine && positionLossEngine.isRunning) {
-      await positionLossEngine.addOrUpdateLossLimit(
-        req.user.id,
-        accountId.trim(),
-        limitType,
-        parseFloat(thresholdAmount),
-        finalExpiresAt
-      );
+      await positionLossEngine.loadLossLimits();
+      await positionLossEngine.loadMonitoredAccounts();
     }
     
     res.status(201).json({ success: true, lock: newLock });
@@ -304,15 +320,17 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       [id, req.user.id]
     );
     
-    // Delete the lock
+    // Delete the lock (this stops monitoring)
     await pool.query('DELETE FROM loss_limit_locks WHERE id = $1 AND user_id = $2', [id, req.user.id]);
     
-    // Notify PositionLossEngine of deleted lock (real-time cache update)
     if (lockInfo.rows.length > 0) {
       const lock = lockInfo.rows[0];
+      
+      // Notify PositionLossEngine to stop monitoring this account (real-time cache update)
       const positionLossEngine = require('../workers/positionLossEngine');
       if (positionLossEngine && positionLossEngine.isRunning) {
-        positionLossEngine.removeLossLimit(req.user.id, lock.account_id, lock.limit_type);
+        await positionLossEngine.loadLossLimits();
+        await positionLossEngine.loadMonitoredAccounts();
       }
     }
     

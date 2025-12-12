@@ -200,14 +200,15 @@ class AlertEngine {
     // O(1) lookup: Get alerts for this symbol
     const symbolAlerts = this.alertsBySymbol.get(symbol);
     if (!symbolAlerts || symbolAlerts.length === 0) {
-      logger.debug(`[AlertEngine] Quote for ${symbol} @ $${lastPrice.toFixed(2)} | No alerts indexed for this symbol`);
       return; // No alerts for this symbol
     }
     
-    logger.info(`[AlertEngine] 📊 Quote: ${symbol} = $${lastPrice.toFixed(2)} | Checking ${symbolAlerts.length} alert(s)`);
-    
-    // O(k) check: Only check alerts for this specific symbol
+    // Log each alert being checked with clear formatting
     for (const alert of symbolAlerts) {
+      const alertDirection = alert.alert_type === 'above' ? 'Above' : 'Below';
+      const alertPrice = parseFloat(alert.price_level).toFixed(2);
+      logger.debug(`[AlertEngine] 📊 Symbol: ${symbol}, Quote: $${lastPrice.toFixed(2)}, Alert Price: ${alertDirection} $${alertPrice}`);
+      
       this.stats.alertsChecked++;
       this.checkAlert(alert, lastPrice, quoteData);
     }
@@ -219,11 +220,11 @@ class AlertEngine {
   checkAlert(alert, currentPrice, quoteData) {
     const shouldTrigger = this.evaluateAlertCondition(alert, currentPrice);
     
-    const priceLevel = parseFloat(alert.price_level);
     if (!shouldTrigger) {
-      logger.debug(`[AlertEngine] Alert ${alert.id}: ${alert.alert_type} $${priceLevel.toFixed(2)} | Current: $${currentPrice.toFixed(2)} | No trigger`);
       return;
     }
+    
+    const priceLevel = parseFloat(alert.price_level);
     
     // Check if already triggered (race condition prevention)
     if (alert._triggering) {

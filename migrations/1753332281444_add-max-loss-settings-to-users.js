@@ -2,7 +2,7 @@ const pool = require('../db');
 
 /**
  * Migration: Add max loss settings and superuser to users table
- * Adds columns for daily and per-trade loss limits with enable/disable flags
+ * Adds columns for daily and per-position loss limits with enable/disable flags
  */
 
 async function up() {
