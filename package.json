@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "engines": {
-    "node": ">=21.5.0"
+    "node": "21.5.0"
   },
   "scripts": {
     "test": "node tests/run_tests.js",

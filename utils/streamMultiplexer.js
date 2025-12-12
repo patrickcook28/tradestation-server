@@ -15,6 +15,7 @@ const UPSTREAM_ACTIVITY_TIMEOUT_MS = 30000; // Close upstream if no data for 30 
 const INITIAL_DATA_TIMEOUT_MS = 10000; // Close if no initial data received within 10 seconds
 const STALE_PENDING_THRESHOLD_MS = 20000; // Consider pending open stale after 20s
 const PERIODIC_CLEANUP_INTERVAL_MS = 60000; // Run cleanup every 60 seconds
+const ZOMBIE_GRACE_PERIOD_MS = 30000; // Wait 30s before destroying connections with 0 subscribers (prevents race conditions)
 
 class StreamMultiplexer {
   /**
@@ -447,7 +448,8 @@ class StreamMultiplexer {
       timeoutController: null, // Already cleaned up
       aborted: false,
       lastActivityAt: Date.now(), 
-      firstDataSent: false 
+      firstDataSent: false,
+      createdAt: Date.now() // Track when connection was created for zombie cleanup grace period
     };
     this.keyToConnection.set(key, state);
 
@@ -933,14 +935,18 @@ class StreamMultiplexer {
         const stalePending = this.cleanupStalePendingOpens();
         
         // CRITICAL: Clean up zombie upstreams (0 subscribers but still active)
+        // BUT: Add grace period to prevent destroying connections during subscriber attachment race condition
         let zombiesRemoved = 0;
+        const now = Date.now();
         for (const [key, state] of this.keyToConnection.entries()) {
           if (state.subscribers.size === 0) {
-            // Destroy immediately - no grace period needed
-            // These are taking up connection slots and causing rate limits
-            logger.warn(`[${this.name}] 🧟 Destroying zombie upstream (0 subscribers): ${key}`);
-            this._destroyConnection(key, 'Zombie cleanup - no subscribers');
-            zombiesRemoved++;
+            const age = now - (state.createdAt || 0);
+            // Only destroy if it's been empty for longer than grace period
+            if (age > ZOMBIE_GRACE_PERIOD_MS) {
+              logger.warn(`[${this.name}] 🧟 Destroying zombie upstream (0 subscribers for ${Math.round(age/1000)}s): ${key}`);
+              this._destroyConnection(key, 'Zombie cleanup - no subscribers');
+              zombiesRemoved++;
+            }
           }
         }
         
