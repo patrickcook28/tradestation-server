@@ -233,19 +233,25 @@ class StreamMultiplexer {
     // Wait for any in-flight open to complete
     const inFlight = this.pendingOpens.get(key);
     if (inFlight) {
-      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Awaiting pending upstream open for key=${key}`);
+      logger.debug(`[${this.name}] Awaiting pending upstream open for key=${key}`);
       try { 
         await inFlight; 
       } catch (e) { 
-        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Pending open failed for key=${key}:`, e && e.message);
+        logger.warn(`[${this.name}] Pending open failed for key=${key}:`, e && e.message);
         const after = this.keyToConnection.get(key);
         if (!after || !after.upstream || after.aborted) {
-          return { __error: true, status: 503, response: { error: 'Service temporarily unavailable', details: 'Previous stream attempt failed' }, message: 'Pending open failed' };
+          // CRITICAL: Clean up the failed pending open to allow retry
+          this.pendingOpens.delete(key);
+          this.pendingOpensTimestamps.delete(key);
+          if (this.pendingOpensCount > 0) this.pendingOpensCount--;
+          
+          logger.warn(`[${this.name}] Cleaned up failed pending open, client can retry. Active=${this.keyToConnection.size}, Pending=${this.pendingOpensCount}`);
+          return { __error: true, status: 503, response: { error: 'Service temporarily unavailable', details: 'Previous stream attempt failed, retry available' }, message: 'Pending open failed' };
         }
       }
       const after = this.keyToConnection.get(key);
       if (after && after.upstream && !after.aborted) {
-        if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Reusing just-opened upstream for key=${key}`);
+        logger.debug(`[${this.name}] Reusing just-opened upstream for key=${key}`);
         return after;
       }
     }
@@ -373,16 +379,16 @@ class StreamMultiplexer {
       const status = isTimeout ? 504 : 502;
       const errorType = isTimeout ? 'Gateway Timeout' : 'Bad Gateway';
       
-      // Log TradeStation API errors for debugging
+      // ALWAYS log TradeStation API errors (not just in verbose mode)
       if (!isTimeout) {
-        logger.debug(`[${this.name}] 🔴 TradeStation API error for key=${key}: ${networkErr.message} (name: ${networkErr.name}, code: ${networkErr.code}). Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
+        logger.error(`[${this.name}] 🔴 TradeStation API error for key=${key}: ${networkErr.message} (name: ${networkErr.name}, code: ${networkErr.code}). Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
         
         // Special handling for "invalid_argument" - likely rate limit or temporary TradeStation issue
         if (networkErr.message === 'invalid_argument') {
-          logger.debug(`[${this.name}] ⚠️  TradeStation returned "invalid_argument" - may be rate limited or temporary API issue. Will retry automatically on next attempt.`);
+          logger.warn(`[${this.name}] ⚠️  TradeStation returned "invalid_argument" - may be rate limited or temporary API issue. Will retry automatically on next attempt.`);
         }
       } else {
-        logger.debug(`[${this.name}] ⏱️  Timeout opening upstream for key=${key}. Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
+        logger.warn(`[${this.name}] ⏱️  Timeout opening upstream for key=${key}. Active: ${this.keyToConnection.size}, Pending: ${this.pendingOpensCount}`);
       }
       
       const err = { __error: true, status, response: { error: errorType, details: networkErr && networkErr.message }, message: `Upstream fetch failed: ${errorType}` };
