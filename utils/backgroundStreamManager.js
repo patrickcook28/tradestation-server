@@ -27,6 +27,7 @@ class InternalSubscriber {
     this._buffer = '';
     
     // Express response compatibility
+    this.writable = true; // CRITICAL: StreamMultiplexer checks this before writing
     this.writableEnded = false;
     this.finished = false;
     this.destroyed = false;
@@ -86,6 +87,8 @@ class InternalSubscriber {
   end() {
     if (this._ended) return;
     this._ended = true;
+    this.writable = false;
+    logger.warn(`[InternalSubscriber] ⚠️ writable set to FALSE in end() for ${this.id}`);
     this.writableEnded = true;
     this.finished = true;
     this._eventHandlers.close.forEach(h => { try { h(); } catch (_) {} });
@@ -125,6 +128,8 @@ class InternalSubscriber {
   }
   
   destroy() {
+    logger.warn(`[InternalSubscriber] ⚠️ writable set to FALSE in destroy() for ${this.id}`);
+    this.writable = false;
     this.destroyed = true;
     this.req.destroyed = true;
     // Clear callbacks to prevent memory leaks
@@ -230,6 +235,7 @@ class BackgroundStream {
     );
     
     this.subscriber = subscriber;
+    logger.info(`[BackgroundStream] Created InternalSubscriber ${subscriber.id} for ${this.getKey()} | writable: ${subscriber.writable}`);
     
     try {
       const addFn = mux.addBackgroundSubscriber || mux.addSubscriber;

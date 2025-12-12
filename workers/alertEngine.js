@@ -232,12 +232,9 @@ class AlertEngine {
     
     switch (alert.alert_type) {
       case 'above':
+      case 'cross_above':
         return currentPrice >= priceLevel;
       case 'below':
-        return currentPrice <= priceLevel;
-      case 'cross_above':
-        // Would need previous price tracking for cross detection
-        return currentPrice >= priceLevel;
       case 'cross_below':
         return currentPrice <= priceLevel;
       default:
@@ -467,6 +464,8 @@ class AlertEngine {
    * This provides real-time updates without waiting for the 60-second reload
    */
   addOrUpdateAlert(alert) {
+    logger.info(`[AlertEngine] 📝 addOrUpdateAlert called for alert ${alert.id} | active: ${alert.is_active} | ticker: ${alert.ticker}`);
+    
     // Remove old version if exists
     this.removeAlert(alert.id);
     
@@ -495,11 +494,15 @@ class AlertEngine {
       const newSymbol = alert.ticker.toUpperCase();
       const userId = alert.user_id;
       
+      logger.info(`[AlertEngine] 🔄 ensureStreamForAlert: user=${userId} symbol=${newSymbol}`);
+      
       // Get all existing quote streams for this user
       const existingStreams = backgroundStreamManager.getStatus().streams || [];
       const userQuoteStreams = existingStreams.filter(s => 
         s.userId === userId && s.streamType === 'quotes'
       );
+      
+      logger.info(`[AlertEngine] Found ${userQuoteStreams.length} existing quote stream(s) for user ${userId}`);
       
       // Check if the symbol is already covered by an existing stream
       const symbolAlreadyCovered = userQuoteStreams.some(s => {
@@ -511,6 +514,7 @@ class AlertEngine {
       });
       
       if (symbolAlreadyCovered) {
+        logger.info(`[AlertEngine] ✅ Symbol ${newSymbol} already covered by existing stream for user ${userId}`);
         return; // Symbol already in an active stream
       }
       
@@ -526,18 +530,22 @@ class AlertEngine {
         });
       }
       
+      logger.info(`[AlertEngine] User ${userId} needs symbols: ${[...allSymbols].join(',')}`);
+      
       // Stop all existing quote streams for this user (we'll create one consolidated stream)
       if (userQuoteStreams.length > 0) {
-        logger.info(`[AlertEngine] Consolidating ${userQuoteStreams.length} quote stream(s) for user ${userId}`);
+        logger.info(`[AlertEngine] ⚠️ Consolidating ${userQuoteStreams.length} quote stream(s) for user ${userId} - STOPPING OLD STREAMS`);
         await backgroundStreamManager.stopQuoteStreamsForUser(userId);
+        logger.info(`[AlertEngine] ✅ Old streams stopped`);
       }
       
       // Start a single consolidated stream with all symbols
       const consolidatedSymbols = [...allSymbols].sort().join(',');
-      logger.info(`[AlertEngine] Starting consolidated quote stream for user ${userId}: ${consolidatedSymbols}`);
+      logger.info(`[AlertEngine] 🚀 Starting consolidated quote stream for user ${userId}: ${consolidatedSymbols}`);
       await backgroundStreamManager.startStreamsForUser(userId, {
         quotes: [consolidatedSymbols]
       });
+      logger.info(`[AlertEngine] ✅ New consolidated stream started`);
     } catch (err) {
       logger.error(`[AlertEngine] Failed to ensure stream for alert:`, err.message);
     }
