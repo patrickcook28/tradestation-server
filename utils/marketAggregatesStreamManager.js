@@ -12,9 +12,15 @@ const mux = new StreamMultiplexer({
   })
 });
 
+// Start periodic cleanup to handle stale connections and pending opens
+mux.startPeriodicCleanup(5000); // Check every 5 seconds for aggressive zombie cleanup
+
 // Use regular addSubscriber (not exclusive) to support multiple concurrent streams
 // for different tickers when user has multiple charts open
-module.exports = { ...mux, addSubscriber: mux.addSubscriber.bind(mux) };
+module.exports = { 
+  multiplexer: mux,  // Export the instance for debug access
+  addSubscriber: mux.addSubscriber.bind(mux) 
+};
 
 
 

@@ -41,6 +41,50 @@ node tests/test_std_dev_alert.js
 node tests/test_sms.js
 ```
 
+### `test_stream_multiplexer.js`
+**Purpose**: Comprehensive brute-force testing of the StreamMultiplexer
+**What it tests**:
+- Basic stream multiplexing (multiple subscribers to one upstream)
+- Rate limiting (MAX_PENDING_OPENS)
+- Max subscribers per key enforcement
+- Late joiner notifications
+- Exclusive subscriber switching
+- Rapid reconnections
+- Subscriber disconnections at various lifecycle stages
+- Concurrent open attempts for same key
+- Timeout handling (connection, initial data, activity)
+- Cleanup and garbage collection
+- Error condition handling (401, 403, 404, timeouts)
+- Heavy load stress testing
+
+**How to run**:
+```bash
+# Option 1: Create test_auth.json with credentials
+cp tests/test_auth.json.example tests/test_auth.json
+# Edit test_auth.json with your credentials
+node tests/test_stream_multiplexer.js
+
+# Option 2: Pass credentials as arguments
+node tests/test_stream_multiplexer.js --user-id=123 --token=xyz --account-id=456
+```
+
+**Setup**:
+1. Copy `test_auth.json.example` to `test_auth.json`
+2. Fill in your credentials (userId, jwtToken, accountId)
+3. The `test_auth.json` file is gitignored for security
+
+### `test_concurrent_streams.js`
+**Purpose**: Tests socket limit fix for concurrent streams
+**What it tests**:
+- Multiple concurrent stream connections
+- Socket pool management
+- Real trading session simulation
+
+**How to run**:
+```bash
+node tests/test_concurrent_streams.js <JWT_TOKEN>
+```
+
 ## Running Tests
 
 ### Run all tests (shows test menu):
@@ -53,6 +97,8 @@ npm test
 node tests/test_timeframe_alerts.js
 node tests/test_std_dev_alert.js
 node tests/test_sms.js
+node tests/test_stream_multiplexer.js
+node tests/test_concurrent_streams.js <JWT_TOKEN>
 ```
 
 ## Prerequisites
@@ -63,6 +109,8 @@ Before running tests, ensure:
 2. **API Credentials** - Valid TradeStation API credentials in the database
 3. **Twilio Configuration** - For SMS tests, ensure Twilio is configured in `config/twilio.js`
 4. **Dependencies** - All npm packages are installed (`npm install`)
+5. **Server is running** - For stream tests, ensure the server is running on port 3001 (or set SERVER_HOST and SERVER_PORT env vars)
+6. **Test Auth** - For stream multiplexer tests, create `tests/test_auth.json` with your credentials
 
 ## Test Data
 

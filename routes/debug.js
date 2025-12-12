@@ -681,6 +681,159 @@ const forceGc = async (req, res) => {
  * Check HTTP protocol version being used by undici for TradeStation API
  * Tests using a simple public endpoint
  */
+/**
+ * Get detailed stream multiplexer state for all active stream managers
+ * Shows pending opens, active connections, subscribers, etc.
+ */
+const streamState = async (req, res) => {
+  try {
+    const quoteStreamManager = require('../utils/quoteStreamManager');
+    const barsStreamManager = require('../utils/barsStreamManager');
+    const positionsStreamManager = require('../utils/positionsStreamManager');
+    const ordersStreamManager = require('../utils/ordersStreamManager');
+    const marketAggregatesStreamManager = require('../utils/marketAggregatesStreamManager');
+    
+    // Stream managers export the multiplexer instance as .multiplexer
+    const managers = {
+      quotes: quoteStreamManager.multiplexer,
+      bars: barsStreamManager.multiplexer,
+      positions: positionsStreamManager.multiplexer,
+      orders: ordersStreamManager.multiplexer,
+      marketAggregates: marketAggregatesStreamManager.multiplexer
+    };
+    
+    const state = {};
+    
+    for (const [name, manager] of Object.entries(managers)) {
+      if (!manager) {
+        state[name] = { error: 'Multiplexer not initialized' };
+        continue;
+      }
+      
+      // Get basic counts
+      const activeCount = manager.keyToConnection ? manager.keyToConnection.size : 0;
+      const pendingCount = manager.pendingOpens ? manager.pendingOpens.size : 0;
+      const cleanupCount = manager.pendingCleanups ? manager.pendingCleanups.size : 0;
+      
+      // Get detailed debug info for each connection
+      const debugInfo = manager.getDebugInfo();
+      
+      // Get pending open details
+      const pendingOpens = [];
+      if (manager.pendingOpensTimestamps) {
+        for (const [key, timestamp] of manager.pendingOpensTimestamps.entries()) {
+          const age = Date.now() - timestamp;
+          pendingOpens.push({ key, age, ageSeconds: Math.round(age / 1000) });
+        }
+      }
+      
+      // Get pending cleanup details
+      const pendingCleanups = [];
+      if (manager.pendingCleanups) {
+        for (const key of manager.pendingCleanups.keys()) {
+          pendingCleanups.push({ key });
+        }
+      }
+      
+      // Get user tracking info
+      const userToLastKey = [];
+      if (manager.userToLastKey) {
+        for (const [userId, key] of manager.userToLastKey.entries()) {
+          userToLastKey.push({ userId, key });
+        }
+      }
+      
+      state[name] = {
+        counts: {
+          active: activeCount,
+          pending: pendingCount,
+          pendingCleanups: cleanupCount,
+          atomicCounter: manager.pendingOpensCount || 0
+        },
+        connections: debugInfo,
+        pendingOpens,
+        pendingCleanups,
+        userToLastKey,
+        stuckPendingWarning: pendingOpens.some(p => p.ageSeconds > 10) ? 
+          'WARNING: Some pending opens are stuck (>10s old)' : null
+      };
+    }
+    
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      streams: state
+    });
+  } catch (error) {
+    console.error('Error getting stream state:', error);
+    res.status(500).json({ error: 'Failed to get stream state', details: error.message });
+  }
+};
+
+/**
+ * Force cleanup of stale connections and pending opens across all stream managers
+ */
+const cleanupStreams = async (req, res) => {
+  try {
+    const quoteStreamManager = require('../utils/quoteStreamManager');
+    const barsStreamManager = require('../utils/barsStreamManager');
+    const positionsStreamManager = require('../utils/positionsStreamManager');
+    const ordersStreamManager = require('../utils/ordersStreamManager');
+    const marketAggregatesStreamManager = require('../utils/marketAggregatesStreamManager');
+    
+    const managers = {
+      quotes: quoteStreamManager.multiplexer,
+      bars: barsStreamManager.multiplexer,
+      positions: positionsStreamManager.multiplexer,
+      orders: ordersStreamManager.multiplexer,
+      marketAggregates: marketAggregatesStreamManager.multiplexer
+    };
+    
+    const results = {};
+    
+    for (const [name, manager] of Object.entries(managers)) {
+      if (!manager) {
+        results[name] = { error: 'Multiplexer not initialized' };
+        continue;
+      }
+      
+      const before = {
+        active: manager.keyToConnection ? manager.keyToConnection.size : 0,
+        pending: manager.pendingOpens ? manager.pendingOpens.size : 0,
+        cleanups: manager.pendingCleanups ? manager.pendingCleanups.size : 0
+      };
+      
+      // Run cleanup methods
+      const staleRemoved = manager.cleanupStaleConnections();
+      const stalePendingRemoved = manager.cleanupStalePendingOpens();
+      
+      const after = {
+        active: manager.keyToConnection ? manager.keyToConnection.size : 0,
+        pending: manager.pendingOpens ? manager.pendingOpens.size : 0,
+        cleanups: manager.pendingCleanups ? manager.pendingCleanups.size : 0
+      };
+      
+      results[name] = {
+        before,
+        after,
+        removed: {
+          staleConnections: staleRemoved,
+          stalePendingOpens: stalePendingRemoved
+        }
+      };
+    }
+    
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      results
+    });
+  } catch (error) {
+    console.error('Error cleaning up streams:', error);
+    res.status(500).json({ error: 'Failed to cleanup streams', details: error.message });
+  }
+};
+
 module.exports = {
   health,
   status,
@@ -690,6 +843,8 @@ module.exports = {
   compareHeapSnapshots,
   heapStats,
   cleanup,
-  forceGc
+  forceGc,
+  streamState,
+  cleanupStreams
 };
 

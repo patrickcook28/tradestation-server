@@ -7,6 +7,9 @@ const mux = new StreamMultiplexer({
   buildRequest: (userId, { accountId, paperTrading }) => ({ path: `/brokerage/stream/accounts/${accountId}/orders`, paperTrading: !!paperTrading })
 });
 
+// Start periodic cleanup to handle stale connections and pending opens
+mux.startPeriodicCleanup(5000); // Check every 5 seconds for aggressive zombie cleanup
+
 // Add consistent logging and heartbeat to orders stream as well
 const addSubscriber = async (userId, deps, res) => {
   if (process.env.DEBUG_STREAMS === 'true') try { logger && logger.info && logger.info(`[Orders] addSubscriber user=${userId} account=${deps && deps.accountId} paper=${!!(deps && deps.paperTrading)}`); } catch (_) {}
@@ -26,6 +29,10 @@ const addBackgroundSubscriber = async (userId, deps, res) => {
   return mux.addSubscriber(userId, deps, res);
 };
 
-module.exports = { ...mux, addSubscriber, addBackgroundSubscriber };
+module.exports = { 
+  multiplexer: mux,  // Export the instance for debug access
+  addSubscriber, 
+  addBackgroundSubscriber 
+};
 
 

@@ -4,8 +4,15 @@ const logger = require('../config/logging');
 const mux = new StreamMultiplexer({
   name: 'Positions',
   makeKey: (userId, { accountId, paperTrading }) => `${userId}|${String(accountId)}|${paperTrading ? 1 : 0}`,
-  buildRequest: (userId, { accountId, paperTrading }) => ({ path: `/brokerage/stream/accounts/${accountId}/positions`, paperTrading: !!paperTrading })
+  buildRequest: (userId, { accountId, paperTrading }) => ({ 
+    path: `/brokerage/stream/accounts/${accountId}/positions`, 
+    paperTrading: !!paperTrading,
+    query: { changes: 'true' } // Only send changes after initial snapshot to prevent duplicates
+  })
 });
+
+// Start periodic cleanup to handle stale connections and pending opens
+mux.startPeriodicCleanup(5000); // Check every 5 seconds for aggressive zombie cleanup
 
 // Wrap addSubscriber to inject lightweight start log and heartbeat to subscribers
 const addSubscriber = async (userId, deps, res) => {
@@ -29,6 +36,10 @@ const addBackgroundSubscriber = async (userId, deps, res) => {
   return mux.addSubscriber(userId, deps, res);
 };
 
-module.exports = { ...mux, addSubscriber, addBackgroundSubscriber };
+module.exports = { 
+  multiplexer: mux,  // Export the instance for debug access
+  addSubscriber, 
+  addBackgroundSubscriber 
+};
 
 

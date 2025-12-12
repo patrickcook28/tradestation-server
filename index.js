@@ -65,11 +65,25 @@ process.on('uncaughtException', (error) => {
      error.message.includes('Cannot read properties of null')) &&
     error.stack && error.stack.includes('undici');
   
+  // Check if this is a known undici HTTP/2 GOAWAY race condition
+  const isUndiciGoawayError = error && error.code === 'ERR_ASSERTION' &&
+    error.message && error.message.includes('client[kRunning]') &&
+    error.stack && error.stack.includes('undici');
+  
   if (isUndiciAbortError) {
     // This is a known race condition in undici when aborting already-closed connections
     // Log it but don't crash the server
     console.warn('[Undici] Non-fatal abort error on already-closed connection (ignored)');
     try { captureException(error, { type: 'uncaughtException-undici-abort', severity: 'warning' }); } catch (_) {}
+    return; // Don't exit
+  }
+  
+  if (isUndiciGoawayError) {
+    // This is a known race condition in undici HTTP/2 when server sends GOAWAY while requests are still pending
+    // Happens during rapid stream switches when we abort connections
+    // Log it but don't crash the server
+    console.warn('[Undici] Non-fatal HTTP/2 GOAWAY race condition (ignored)');
+    try { captureException(error, { type: 'uncaughtException-undici-goaway', severity: 'warning' }); } catch (_) {}
     return; // Don't exit
   }
   
@@ -153,6 +167,8 @@ app.get('/debug', asyncHandler(routes.debugRoutes.debug));
 app.get('/debug/memory', asyncHandler(routes.debugRoutes.memory));
 app.post('/debug/cleanup', asyncHandler(routes.debugRoutes.cleanup));
 app.post('/debug/gc', asyncHandler(routes.debugRoutes.forceGc));
+app.get('/debug/streams', asyncHandler(routes.debugRoutes.streamState));
+app.post('/debug/streams/cleanup', asyncHandler(routes.debugRoutes.cleanupStreams));
 
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));
