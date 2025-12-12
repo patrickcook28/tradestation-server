@@ -834,6 +834,52 @@ const cleanupStreams = async (req, res) => {
   }
 };
 
+/**
+ * Test TradeStation API connectivity (non-stream)
+ * GET /debug/test-tradestation
+ */
+const testTradestation = async (req, res) => {
+  try {
+    const { getUserAccessToken } = require('../utils/tradestationProxy');
+    const userId = req.user.id;
+    const accessToken = await getUserAccessToken(userId);
+    
+    // Try a simple non-stream request
+    const testUrl = 'https://api.tradestation.com/v3/brokerage/accounts';
+    const startTime = Date.now();
+    
+    const response = await fetch(testUrl, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10000) // 10 second timeout
+    });
+    
+    const duration = Date.now() - startTime;
+    const data = await response.json();
+    
+    res.json({
+      success: response.ok,
+      status: response.status,
+      duration: `${duration}ms`,
+      dataReceived: !!data,
+      message: response.ok ? 'TradeStation API is reachable' : 'TradeStation API returned error',
+      railwayRegion: process.env.RAILWAY_REGION || 'unknown',
+      railwayEnvironment: process.env.RAILWAY_ENVIRONMENT || 'unknown'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      name: error.name,
+      code: error.code,
+      cause: error.cause,
+      message: 'Failed to reach TradeStation API',
+      railwayRegion: process.env.RAILWAY_REGION || 'unknown',
+      railwayEnvironment: process.env.RAILWAY_ENVIRONMENT || 'unknown'
+    });
+  }
+};
+
 module.exports = {
   health,
   status,
@@ -845,6 +891,7 @@ module.exports = {
   cleanup,
   forceGc,
   streamState,
-  cleanupStreams
+  cleanupStreams,
+  testTradestation
 };
 

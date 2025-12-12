@@ -12,9 +12,6 @@ const mux = new StreamMultiplexer({
   buildRequest: (userId, symbolsCsv) => ({ path: `/marketdata/stream/quotes/${normalizeSymbolsCsv(symbolsCsv)}`, paperTrading: false })
 });
 
-// Start periodic cleanup to handle stale connections and pending opens
-mux.startPeriodicCleanup(5000); // Check every 5 seconds for aggressive zombie cleanup
-
 // MEMORY LEAK FIX: Don't use exclusive subscribers for quotes
 // This allows user streams and background alert streams to share the same upstream connection
 // The stream only closes when ALL subscribers (user + background) disconnect

@@ -169,6 +169,7 @@ app.post('/debug/cleanup', asyncHandler(routes.debugRoutes.cleanup));
 app.post('/debug/gc', asyncHandler(routes.debugRoutes.forceGc));
 app.get('/debug/streams', asyncHandler(routes.debugRoutes.streamState));
 app.post('/debug/streams/cleanup', asyncHandler(routes.debugRoutes.cleanupStreams));
+app.get('/debug/test-tradestation', authenticateToken, asyncHandler(routes.debugRoutes.testTradestation));
 
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));
