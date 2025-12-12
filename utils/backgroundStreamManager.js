@@ -31,7 +31,26 @@ class InternalSubscriber {
     this.finished = false;
     this.destroyed = false;
     this._eventHandlers = { close: [], finish: [], error: [] };
-    this.req = { query: {}, headers: {}, aborted: false, destroyed: false, on: () => {} };
+    this._reqEventHandlers = { close: [], aborted: [] };
+    this.req = { 
+      query: {}, 
+      headers: {}, 
+      aborted: false, 
+      destroyed: false,
+      on: (event, handler) => {
+        if (this._reqEventHandlers[event]) this._reqEventHandlers[event].push(handler);
+        return this.req;
+      },
+      once: (event, handler) => {
+        const wrapper = (...args) => {
+          handler(...args);
+          const idx = this._reqEventHandlers[event]?.indexOf(wrapper);
+          if (idx !== -1) this._reqEventHandlers[event].splice(idx, 1);
+        };
+        if (this._reqEventHandlers[event]) this._reqEventHandlers[event].push(wrapper);
+        return this.req;
+      }
+    };
   }
   
   setHeader() {}
@@ -80,6 +99,23 @@ class InternalSubscriber {
   
   on(event, handler) {
     if (this._eventHandlers[event]) this._eventHandlers[event].push(handler);
+    return this;
+  }
+  
+  once(event, handler) {
+    const wrapper = (...args) => {
+      handler(...args);
+      this.off(event, wrapper);
+    };
+    this.on(event, wrapper);
+    return this;
+  }
+  
+  off(event, handler) {
+    if (this._eventHandlers[event]) {
+      const idx = this._eventHandlers[event].indexOf(handler);
+      if (idx !== -1) this._eventHandlers[event].splice(idx, 1);
+    }
     return this;
   }
   
