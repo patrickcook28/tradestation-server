@@ -47,8 +47,10 @@ class PositionLossEngine {
     // Key: `${userId}|${accountId}|${limitType}` -> { threshold_amount, expires_at, account_defaults }
     this.lossLimitsCache = new Map();
     
-    // Track triggered alerts to prevent duplicates
-    // accountKey|positionId -> alertId
+    // Track positions that have already triggered alerts (by PositionID)
+    // Once a position triggers an alert, we stop checking it entirely
+    // Key: `${userId}|${accountId}|${isPaper}|${positionId}` -> alertId
+    // Cleaned up when position closes (quantity = 0)
     this.triggeredAlerts = new Map();
     
     // Track positions currently being processed to prevent race conditions
@@ -84,6 +86,9 @@ class PositionLossEngine {
     // Subscribe to position stream data from BackgroundStreamManager
     this.backgroundStreamManager.on('data', (event) => this.handleStreamData(event));
     
+    // Load existing unacknowledged alerts from database to prevent duplicates on restart
+    await this.loadTriggeredAlertsFromDatabase();
+    
     // Load loss limits into cache
     await this.loadLossLimits();
     
@@ -96,6 +101,13 @@ class PositionLossEngine {
     this.reloadInterval = setInterval(async () => {
       await this.loadLossLimits();
       await this.loadMonitoredAccounts();
+      
+      // Monitor memory usage of triggeredAlerts Map
+      const alertCount = this.triggeredAlerts.size;
+      const estimatedMemoryKB = Math.round((alertCount * 60) / 1024); // ~60 bytes per entry
+      if (process.env.DEBUG_STREAMS === 'true' || alertCount > 1000) {
+        logger.info(`[PositionLossEngine] 📊 Memory: ${alertCount} tracked alerts (~${estimatedMemoryKB} KB)`);
+      }
     }, 60000);
   }
 
@@ -167,6 +179,67 @@ class PositionLossEngine {
       
     } catch (error) {
       logger.error('[PositionLossEngine] Failed to load loss limits:', error.message);
+    }
+  }
+
+  /**
+   * Load existing alert Position IDs from database into triggeredAlerts Map
+   * 
+   * Purpose: Once a position has triggered an alert, we stop checking it entirely.
+   * This prevents duplicate alerts after server restart and improves performance.
+   * 
+   * Loads alerts from last 24 hours (both acknowledged and unacknowledged):
+   * - We don't re-check positions that already triggered alerts
+   * - When position closes, we clean it from the Map
+   * - New positions (new PositionID) will be checked normally
+   */
+  async loadTriggeredAlertsFromDatabase() {
+    try {
+      logger.info('[PositionLossEngine] Loading existing alerts from database...');
+      
+      // Get all recent trade/position alerts (last 24 hours)
+      // We use 24 hours to avoid loading ancient alerts while still covering typical trading sessions
+      const result = await pool.query(`
+        SELECT 
+          id,
+          user_id,
+          account_id,
+          position_snapshot,
+          acknowledged_at
+        FROM loss_limit_alerts
+        WHERE alert_type = 'trade'
+          AND detected_at > NOW() - INTERVAL '24 hours'
+        ORDER BY detected_at DESC
+      `);
+      
+      let loadedCount = 0;
+      let acknowledgedCount = 0;
+      
+      for (const row of result.rows) {
+        const userId = String(row.user_id);
+        const accountId = row.account_id;
+        const positionSnapshot = row.position_snapshot || {};
+        const positionId = positionSnapshot.PositionID || `${positionSnapshot.Symbol}_${accountId}`;
+        
+        // Determine if paper trading from account ID (SIM prefix = paper)
+        const isPaper = accountId.startsWith('SIM');
+        
+        // Build the same alertKey format used in checkPositionLoss
+        const alertKey = `${userId}|${accountId}|${isPaper ? 1 : 0}|${positionId}`;
+        
+        // Store in triggeredAlerts Map
+        this.triggeredAlerts.set(alertKey, row.id);
+        loadedCount++;
+        
+        if (row.acknowledged_at) {
+          acknowledgedCount++;
+        }
+      }
+      
+      logger.info(`[PositionLossEngine] ✅ Loaded ${loadedCount} existing alert(s) into memory (${acknowledgedCount} acknowledged, ${loadedCount - acknowledgedCount} pending)`);
+      
+    } catch (error) {
+      logger.error('[PositionLossEngine] Failed to load triggered alerts from database:', error.message);
     }
   }
 
@@ -488,29 +561,15 @@ class PositionLossEngine {
       const positionId = positionData.PositionID || `${positionData.Symbol}_${accountId}`;
       const alertKey = `${userId}|${accountId}|${paperTrading ? 1 : 0}|${positionId}`;
       
-      // Check if already triggered
-      let isAcknowledged = false;
+      // If we've already triggered an alert for this specific position, skip all further checks
+      // The PositionID is unique - once alerted, user has made their decision (dismiss or close)
       if (this.triggeredAlerts.has(alertKey)) {
-        // Check if the alert was acknowledged
-        const alertId = this.triggeredAlerts.get(alertKey);
-        
-        const alertResult = await pool.query(
-          'SELECT acknowledged_at FROM loss_limit_alerts WHERE id = $1',
-          [alertId]
-        );
-        
-        if (alertResult.rows.length > 0 && alertResult.rows[0].acknowledged_at) {
-          // Alert was acknowledged - don't log or check again for this position
-          isAcknowledged = true;
-        } else {
-          // Alert already triggered and not acknowledged - don't log or check again
-          return;
-        }
+        return; // Already handled this position
       }
       
-      // Skip logging and checking if position is in profit or alert is acknowledged
-      if (lossAmount === 0 || isAcknowledged) {
-        return; // Position is in profit or alert already acknowledged
+      // Skip if position is in profit (no loss to check)
+      if (lossAmount === 0) {
+        return;
       }
       
       // Log position check with clear formatting (similar to AlertEngine)
