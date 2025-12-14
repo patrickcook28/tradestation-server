@@ -775,8 +775,8 @@ class StreamMultiplexer {
         }
         
         // Throttle rapid switches to prevent undici HTTP/2 race conditions
-        // If switching too fast (< 100ms), wait a bit to let undici clean up
-        const MIN_SWITCH_DELAY_MS = 100;
+        // Use minimal delay (20ms) to allow cleanup without blocking SSE connection establishment
+        const MIN_SWITCH_DELAY_MS = 20;
         if (timeSinceLastSwitch < MIN_SWITCH_DELAY_MS) {
           const waitTime = MIN_SWITCH_DELAY_MS - timeSinceLastSwitch;
           logger.debug(`[${this.name}] Throttling rapid switch, waiting ${waitTime}ms...`);
@@ -790,9 +790,12 @@ class StreamMultiplexer {
       }
       
       this.userToLastKey.set(userId, nextKey);
-      return await this.addSubscriber(userId, deps, res);
+      logger.debug(`[${this.name}] ✅ Starting addSubscriber for key=${nextKey}`);
+      const result = await this.addSubscriber(userId, deps, res);
+      logger.debug(`[${this.name}] ✅ Successfully added subscriber for key=${nextKey}`);
+      return result;
     } catch (error) {
-      logger.error(`[${this.name}] Error in addExclusiveSubscriber for userId=${userId}:`, error);
+      logger.error(`[${this.name}] ❌ Error in addExclusiveSubscriber for userId=${userId}, key would be ${this.makeKey(userId, deps)}:`, error);
       try { res.setHeader('Content-Type', 'application/json'); } catch (_) {}
       try { return res.status(500).json({ error: 'Internal server error', details: error.message }); } catch (_) { try { res.end(); } catch (_) {} return; }
     }
