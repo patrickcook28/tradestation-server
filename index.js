@@ -205,6 +205,9 @@ app.get('/debug/credentials', asyncHandler(routes.tradeAlertsRoutes.debugCredent
 // Client config routes
 app.get('/client_config', authenticateToken, asyncHandler(routes.clientConfigRoutes.getInitialConfig));
 
+// Learn content route (public, no auth required)
+app.get('/learn/content', asyncHandler(routes.learnRoutes.getLearnContent));
+
 // Add all tradestation routes
 app.get('/', asyncHandler(routes.tradeStationRoutes.handleOAuthCallback));
 app.get('/tradestation/credentials', authenticateToken, asyncHandler(routes.tradeStationRoutes.getStoredCredentials));

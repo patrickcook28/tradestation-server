@@ -62,10 +62,22 @@ async function getOrCreateCustomer(userId, email) {
 router.post('/create_checkout_session', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { plan } = req.body; // 'monthly' or 'annual'
+    const { plan, isTrial } = req.body; // 'monthly' or 'annual', isTrial boolean
 
     if (!plan || !['monthly', 'annual'].includes(plan)) {
       return res.status(400).json({ error: 'Invalid plan. Must be "monthly" or "annual"' });
+    }
+
+    // Prevent free trial reuse
+    if (isTrial) {
+      const { hasUsedTrial } = require('../utils/subscriptionHelpers');
+      const usedTrial = await hasUsedTrial(userId);
+      
+      if (usedTrial) {
+        return res.status(400).json({ 
+          error: 'You have already used your free trial. Please subscribe to a paid plan.' 
+        });
+      }
     }
 
     // Get user email
@@ -80,17 +92,30 @@ router.post('/create_checkout_session', authenticateToken, async (req, res) => {
     const customerId = await getOrCreateCustomer(userId, email);
 
     // Get price ID from environment variables
-    const priceId = plan === 'monthly' 
-      ? process.env.STRIPE_PRICE_ID_MONTHLY 
-      : process.env.STRIPE_PRICE_ID_ANNUAL;
+    let priceId;
+    let trialPeriodDays = 0;
+    
+    if (isTrial) {
+      // Use trial product ID if provided, otherwise use regular price with 14-day trial
+      priceId = process.env.STRIPE_PRICE_ID_TRIAL || (plan === 'monthly' 
+        ? process.env.STRIPE_PRICE_ID_MONTHLY 
+        : process.env.STRIPE_PRICE_ID_ANNUAL);
+      trialPeriodDays = 14; // 2-week free trial
+    } else {
+      priceId = plan === 'monthly' 
+        ? process.env.STRIPE_PRICE_ID_MONTHLY 
+        : process.env.STRIPE_PRICE_ID_ANNUAL;
+      // Regular subscriptions don't have a trial period
+      trialPeriodDays = 0;
+    }
 
     if (!priceId) {
-      logger.error(`Missing Stripe price ID for plan: ${plan}`);
+      logger.error(`Missing Stripe price ID for plan: ${plan}, isTrial: ${isTrial}`);
       return res.status(500).json({ error: 'Subscription configuration error' });
     }
 
     // Create Checkout session
-    const session = await stripe.checkout.sessions.create({
+    const sessionConfig = {
       customer: customerId,
       billing_address_collection: 'auto',
       line_items: [
@@ -103,7 +128,6 @@ router.post('/create_checkout_session', authenticateToken, async (req, res) => {
       success_url: `${process.env.FRONTEND_URL}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL}/pricing?canceled=true`,
       subscription_data: {
-        trial_period_days: 7,
         metadata: {
           user_id: userId.toString()
         }
@@ -111,9 +135,16 @@ router.post('/create_checkout_session', authenticateToken, async (req, res) => {
       metadata: {
         user_id: userId.toString()
       }
-    });
+    };
 
-    logger.info(`Created checkout session for user ${userId}, plan: ${plan}`);
+    // Add trial period if this is a trial subscription
+    if (trialPeriodDays > 0) {
+      sessionConfig.subscription_data.trial_period_days = trialPeriodDays;
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionConfig);
+
+    logger.info(`Created checkout session for user ${userId}, plan: ${plan}, isTrial: ${isTrial}, trialDays: ${trialPeriodDays}`);
     res.json({ url: session.url });
   } catch (error) {
     logger.error('Error creating checkout session:', error);

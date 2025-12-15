@@ -234,6 +234,11 @@ class PositionLossEngine {
         if (row.acknowledged_at) {
           acknowledgedCount++;
         }
+        
+        // Log each loaded alert for debugging
+        if (process.env.DEBUG_STREAMS === 'true') {
+          logger.debug(`[PositionLossEngine] Loaded alert ${row.id} for position ${positionSnapshot.Symbol} (PositionID: ${positionId}, alertKey: ${alertKey}${row.acknowledged_at ? ', acknowledged' : ''})`);
+        }
       }
       
       logger.info(`[PositionLossEngine] ✅ Loaded ${loadedCount} existing alert(s) into memory (${acknowledgedCount} acknowledged, ${loadedCount - acknowledgedCount} pending)`);
@@ -564,6 +569,7 @@ class PositionLossEngine {
       // If we've already triggered an alert for this specific position, skip all further checks
       // The PositionID is unique - once alerted, user has made their decision (dismiss or close)
       if (this.triggeredAlerts.has(alertKey)) {
+        logger.debug(`[PositionLossEngine] ⏭️ Skipping position ${symbol} (PositionID: ${positionId}) - alert already triggered`);
         return; // Already handled this position
       }
       
@@ -622,29 +628,6 @@ class PositionLossEngine {
     const alertKey = `${userId}|${accountId}|${paperTrading ? 1 : 0}|${positionId}`;
     
     try {
-      // Double-check database for recent alert (race condition prevention)
-      // Check if an alert was created in the last 5 seconds for this position
-      const recentAlertCheck = await pool.query(`
-        SELECT id, acknowledged_at 
-        FROM loss_limit_alerts 
-        WHERE user_id = $1 
-          AND account_id = $2 
-          AND alert_type = 'trade'
-          AND position_snapshot->>'Symbol' = $3
-          AND detected_at > NOW() - INTERVAL '5 seconds'
-        ORDER BY detected_at DESC
-        LIMIT 1
-      `, [userId, accountId, positionData.Symbol]);
-      
-      if (recentAlertCheck.rows.length > 0) {
-        const recentAlert = recentAlertCheck.rows[0];
-        // If not acknowledged, use the existing alert
-        if (!recentAlert.acknowledged_at) {
-          this.triggeredAlerts.set(alertKey, recentAlert.id);
-          return; // Skip creating duplicate
-        }
-      }
-      
       // Create position snapshot (only essential fields to minimize memory)
       const positionSnapshot = {
         Symbol: positionData.Symbol,

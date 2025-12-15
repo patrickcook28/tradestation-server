@@ -104,6 +104,28 @@ async function isInTrial(userId) {
 }
 
 /**
+ * Check if user has ever used a free trial
+ * @param {number} userId - User ID
+ * @returns {boolean} True if user has used a trial before
+ */
+async function hasUsedTrial(userId) {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) as count 
+       FROM subscriptions 
+       WHERE user_id = $1 
+       AND (trial_start IS NOT NULL OR trial_end IS NOT NULL)`,
+      [userId]
+    );
+
+    return parseInt(result.rows[0].count) > 0;
+  } catch (error) {
+    logger.error('Error checking trial history:', error);
+    return false;
+  }
+}
+
+/**
  * Get subscription status summary for a user
  * @param {number} userId - User ID
  * @returns {object} Status summary including access level, subscription details, trial info
@@ -119,18 +141,23 @@ async function getSubscriptionStatus(userId) {
     if (userResult.rows.length === 0) {
       return {
         hasAccess: false,
-        reason: 'user_not_found'
+        reason: 'user_not_found',
+        hasUsedTrial: false
       };
     }
 
     const user = userResult.rows[0];
+
+    // Check if user has used trial before
+    const hasUsedTrialBefore = await hasUsedTrial(userId);
 
     // Superuser
     if (user.superuser) {
       return {
         hasAccess: true,
         reason: 'superuser',
-        subscription: null
+        subscription: null,
+        hasUsedTrial: hasUsedTrialBefore
       };
     }
 
@@ -146,7 +173,8 @@ async function getSubscriptionStatus(userId) {
           hasAccess: true,
           reason: 'beta_access',
           referralCode: user.referral_code,
-          subscription: null
+          subscription: null,
+          hasUsedTrial: hasUsedTrialBefore
         };
       } else {
         // Clear invalid beta status
@@ -164,11 +192,54 @@ async function getSubscriptionStatus(userId) {
       return {
         hasAccess: false,
         reason: 'no_subscription',
-        subscription: null
+        subscription: null,
+        hasUsedTrial: hasUsedTrialBefore
       };
     }
 
+    // For trialing subscriptions, check Stripe directly to get real-time cancellation status
+    // Stripe sets cancel_at (future timestamp) when a trial is canceled, not cancel_at_period_end
+    let cancelAtPeriodEnd = subscription.cancel_at_period_end;
+    let canceledAt = subscription.canceled_at;
+    let cancelAt = null;
+    
+    if (subscription.status === 'trialing' && subscription.stripe_subscription_id) {
+      try {
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        const stripeSubscription = await stripe.subscriptions.retrieve(subscription.stripe_subscription_id);
+        
+        // Update cancellation fields from Stripe
+        cancelAtPeriodEnd = stripeSubscription.cancel_at_period_end || false;
+        canceledAt = stripeSubscription.canceled_at ? new Date(stripeSubscription.canceled_at * 1000) : null;
+        cancelAt = stripeSubscription.cancel_at ? new Date(stripeSubscription.cancel_at * 1000) : null;
+        
+        // Sync cancellation status back to database
+        if (canceledAt && !subscription.canceled_at) {
+          await pool.query(
+            'UPDATE subscriptions SET canceled_at = $1 WHERE id = $2',
+            [canceledAt, subscription.id]
+          );
+        }
+        
+        if (cancelAtPeriodEnd !== subscription.cancel_at_period_end) {
+          await pool.query(
+            'UPDATE subscriptions SET cancel_at_period_end = $1 WHERE id = $2',
+            [cancelAtPeriodEnd, subscription.id]
+          );
+        }
+      } catch (error) {
+        logger.error('Error fetching subscription from Stripe:', error);
+        // Fall back to database values if Stripe fetch fails
+      }
+    }
+
     const hasAccess = ['active', 'trialing'].includes(subscription.status);
+    
+    // Determine if subscription/trial is canceled
+    // For trials, Stripe sets cancel_at (future timestamp) when canceled
+    // For active subscriptions, cancel_at_period_end is set to true
+    // canceled_at is set when subscription is already canceled
+    const isCanceled = cancelAt !== null || cancelAtPeriodEnd === true || canceledAt !== null;
 
     return {
       hasAccess,
@@ -178,9 +249,13 @@ async function getSubscriptionStatus(userId) {
         status: subscription.status,
         plan: subscription.plan,
         currentPeriodEnd: subscription.current_period_end,
-        cancelAtPeriodEnd: subscription.cancel_at_period_end,
-        trialEnd: subscription.trial_end
-      }
+        cancelAtPeriodEnd: cancelAtPeriodEnd,
+        canceledAt: canceledAt,
+        cancelAt: cancelAt,
+        trialEnd: subscription.trial_end,
+        isCanceled: isCanceled
+      },
+      hasUsedTrial: hasUsedTrialBefore
     };
   } catch (error) {
     logger.error('Error getting subscription status:', error);
@@ -192,6 +267,7 @@ module.exports = {
   getActiveSubscription,
   hasActiveSubscription,
   isInTrial,
+  hasUsedTrial,
   getSubscriptionStatus
 };
 

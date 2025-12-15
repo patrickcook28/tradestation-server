@@ -118,12 +118,14 @@ class AlertEngine {
 
   /**
    * Load all active alerts from database into memory indexes
+   * Excludes alerts that have already been triggered to prevent retriggering on server restart
    */
   async loadAlerts() {
     try {
       const result = await pool.query(`
         SELECT * FROM trade_alerts 
         WHERE is_active = true
+          AND triggered_at IS NULL
       `);
       
       const alerts = result.rows;

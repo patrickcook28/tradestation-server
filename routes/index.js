@@ -10,6 +10,7 @@ const indicatorsRoutes = require('./indicators');
 const contactRoutes = require('./contact');
 const bugReportsRoutes = require('./bugReports');
 const debugRoutes = require('./debug');
+const learnRoutes = require('./learn');
 
 module.exports = {
     authRoutes,
@@ -23,5 +24,6 @@ module.exports = {
     indicatorsRoutes,
     contactRoutes,
     bugReportsRoutes,
-    debugRoutes
+    debugRoutes,
+    learnRoutes
 };

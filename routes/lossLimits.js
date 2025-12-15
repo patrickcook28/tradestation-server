@@ -84,7 +84,8 @@ router.get('/', authenticateToken, async (req, res) => {
 /**
  * POST /loss_limits
  * Enable a loss limit for an account
- * Body: { accountId, limitType, thresholdAmount, expiresAt? }
+ * Body: { accountId, limitType, thresholdAmount?, expiresAt? }
+ * Note: thresholdAmount is optional for 'manual' lock type, required for 'daily' and 'trade'
  */
 router.post('/', authenticateToken, async (req, res) => {
   try {
@@ -94,11 +95,15 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!accountId || !accountId.trim()) {
       return res.status(400).json({ success: false, error: 'accountId is required' });
     }
-    if (!limitType || !['daily', 'trade'].includes(limitType)) {
-      return res.status(400).json({ success: false, error: 'limitType must be "daily" or "trade"' });
+    if (!limitType || !['daily', 'trade', 'manual'].includes(limitType)) {
+      return res.status(400).json({ success: false, error: 'limitType must be "daily", "trade", or "manual"' });
     }
-    if (!thresholdAmount || isNaN(parseFloat(thresholdAmount)) || parseFloat(thresholdAmount) <= 0) {
-      return res.status(400).json({ success: false, error: 'thresholdAmount must be a positive number' });
+    // For manual locks, thresholdAmount is optional (defaults to 0)
+    // For daily/trade locks, thresholdAmount is required
+    if (limitType !== 'manual') {
+      if (!thresholdAmount || isNaN(parseFloat(thresholdAmount)) || parseFloat(thresholdAmount) <= 0) {
+        return res.status(400).json({ success: false, error: 'thresholdAmount must be a positive number' });
+      }
     }
     
     // Use provided expiresAt or default to next 4 PM EST
@@ -136,11 +141,16 @@ router.post('/', authenticateToken, async (req, res) => {
     }
     
     // Insert new lock
+    // For manual locks, use 0 as threshold_amount if not provided
+    const finalThresholdAmount = limitType === 'manual' 
+      ? (thresholdAmount ? parseFloat(thresholdAmount) : 0)
+      : parseFloat(thresholdAmount);
+    
     const insertResult = await pool.query(
       `INSERT INTO loss_limit_locks (user_id, account_id, limit_type, threshold_amount, expires_at)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, account_id, limit_type, threshold_amount, enabled_at, expires_at, created_at`,
-      [req.user.id, accountId.trim(), limitType, parseFloat(thresholdAmount), finalExpiresAt]
+      [req.user.id, accountId.trim(), limitType, finalThresholdAmount, finalExpiresAt]
     );
     
     const newLock = insertResult.rows[0];
@@ -344,11 +354,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 /**
  * GET /loss_limits/lockout_status
  * Check if any accounts are currently locked out from trading
+ * Includes both daily loss limit alerts and manual lockouts
  */
 router.get('/lockout_status', authenticateToken, async (req, res) => {
   try {
     // Find daily alerts where lockout hasn't expired yet
-    const result = await pool.query(
+    const alertsResult = await pool.query(
       `SELECT id, account_id, threshold_amount, loss_amount, lockout_expires_at, detected_at
        FROM loss_limit_alerts
        WHERE user_id = $1 
@@ -358,15 +369,43 @@ router.get('/lockout_status', authenticateToken, async (req, res) => {
       [req.user.id]
     );
     
-    const lockedOutAccounts = result.rows.map(row => ({
-      alertId: row.id,
-      accountId: row.account_id,
-      alertType: 'daily',
-      thresholdAmount: parseFloat(row.threshold_amount),
-      lossAmount: parseFloat(row.loss_amount),
-      lockoutExpiresAt: row.lockout_expires_at,
-      detectedAt: row.detected_at
-    }));
+    // Find manual locks where lockout hasn't expired yet
+    const manualLocksResult = await pool.query(
+      `SELECT id, account_id, threshold_amount, expires_at, enabled_at
+       FROM loss_limit_locks
+       WHERE user_id = $1 
+         AND limit_type = 'manual'
+         AND expires_at > NOW()
+       ORDER BY enabled_at DESC`,
+      [req.user.id]
+    );
+    
+    const lockedOutAccounts = [];
+    
+    // Add daily loss limit alerts
+    alertsResult.rows.forEach(row => {
+      lockedOutAccounts.push({
+        alertId: row.id,
+        accountId: row.account_id,
+        alertType: 'daily',
+        thresholdAmount: parseFloat(row.threshold_amount),
+        lossAmount: parseFloat(row.loss_amount),
+        lockoutExpiresAt: row.lockout_expires_at,
+        detectedAt: row.detected_at
+      });
+    });
+    
+    // Add manual lockouts
+    manualLocksResult.rows.forEach(row => {
+      lockedOutAccounts.push({
+        lockId: row.id,
+        accountId: row.account_id,
+        alertType: 'manual',
+        thresholdAmount: parseFloat(row.threshold_amount),
+        lockoutExpiresAt: row.expires_at,
+        enabledAt: row.enabled_at
+      });
+    });
     
     res.json({ 
       success: true, 

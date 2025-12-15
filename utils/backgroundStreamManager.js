@@ -163,6 +163,11 @@ class BackgroundStream {
     // CRITICAL: Distinguish between temporary disconnects (should reconnect) 
     // and permanent stops (user left, alert deleted - should NOT reconnect)
     this.permanentlyStopped = false;
+    
+    // Circuit breaker: Track rapid failures to prevent infinite reconnection loops
+    this.recentFailures = [];
+    this.maxRecentFailures = 10; // If 10 failures in 60 seconds, go idle
+    this.failureWindowMs = 60000;
   }
   
   getKey() {
@@ -189,6 +194,7 @@ class BackgroundStream {
     this.messagesReceived = 0;
     this.reconnectDelay = 1000;
     this.permanentlyStopped = false; // Reset on explicit start
+    this.recentFailures = []; // Reset circuit breaker on explicit start
     
     await this.connect();
   }
@@ -211,6 +217,10 @@ class BackgroundStream {
       this.subscriber.destroy();
       this.subscriber = null;
     }
+    
+    // CRITICAL: Reset startedAt for each connection attempt so timeSinceStart is accurate
+    this.startedAt = new Date();
+    this.messagesReceived = 0;
     
     this.status = 'connecting';
     logger.info(`[BackgroundStream] Connecting: ${this.getKey()}`);
@@ -288,6 +298,11 @@ class BackgroundStream {
     this.messagesReceived++;
     this.lastDataAt = new Date();
     
+    // Reset circuit breaker on successful data reception (connection is healthy)
+    if (this.messagesReceived === 1) {
+      this.recentFailures = [];
+    }
+    
     if (data.Heartbeat) return;
     
     // Include deps (accountId, paperTrading) in the event for position streams
@@ -309,18 +324,33 @@ class BackgroundStream {
   handleEnd() {
     if (this.status === 'stopped') return;
     
-    logger.info(`[BackgroundStream] Stream ended: ${this.getKey()}`);
+    const timeSinceStart = this.startedAt ? Date.now() - this.startedAt.getTime() : 0;
+    logger.info(`[BackgroundStream] Stream ended: ${this.getKey()} (uptime: ${timeSinceStart}ms, messages: ${this.messagesReceived})`);
     this.stopHealthLogging();
     
     // For position streams: if stream ended immediately with no data, 
     // it likely means there are no open positions. Don't reconnect.
     if (this.streamType === 'positions') {
-      const timeSinceStart = Date.now() - (this.startedAt?.getTime() || 0);
       if (timeSinceStart < 5000 && this.messagesReceived === 0) {
-        logger.info(`[BackgroundStream] Position stream ended with no data (no open positions). Not reconnecting: ${this.getKey()}`);
+        logger.info(`[BackgroundStream] Position stream ended with no data after ${timeSinceStart}ms (no open positions). Setting to idle, not reconnecting: ${this.getKey()}`);
         this.status = 'idle'; // Idle state - can be restarted but won't auto-reconnect
         return;
+      } else {
+        logger.info(`[BackgroundStream] Position stream ended but will reconnect (uptime: ${timeSinceStart}ms >= 5000ms or messages: ${this.messagesReceived} > 0)`);
       }
+    }
+    
+    // Track rapid failures for circuit breaker
+    if (timeSinceStart < 10000) {
+      this.trackFailure();
+      if (this.shouldTripCircuitBreaker()) {
+        logger.warn(`[BackgroundStream] Circuit breaker tripped due to ${this.recentFailures.length} rapid failures. Setting to idle: ${this.getKey()}`);
+        this.status = 'idle';
+        return;
+      }
+    } else {
+      // Connection was stable, reset failure tracking
+      this.recentFailures = [];
     }
     
     this.scheduleReconnect();
@@ -331,7 +361,31 @@ class BackgroundStream {
     
     logger.error(`[BackgroundStream] Stream error: ${this.getKey()}`, err?.message || err);
     this.stopHealthLogging();
+    
+    // Track error for circuit breaker
+    this.trackFailure();
+    if (this.shouldTripCircuitBreaker()) {
+      logger.warn(`[BackgroundStream] Circuit breaker tripped due to ${this.recentFailures.length} rapid failures. Setting to idle: ${this.getKey()}`);
+      this.status = 'idle';
+      return;
+    }
+    
     this.scheduleReconnect();
+  }
+  
+  trackFailure() {
+    const now = Date.now();
+    this.recentFailures.push(now);
+    
+    // Clean up old failures outside the window
+    this.recentFailures = this.recentFailures.filter(
+      timestamp => now - timestamp < this.failureWindowMs
+    );
+  }
+  
+  shouldTripCircuitBreaker() {
+    // Trip if we've had too many failures in recent window
+    return this.recentFailures.length >= this.maxRecentFailures;
   }
   
   scheduleReconnect() {
