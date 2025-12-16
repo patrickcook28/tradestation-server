@@ -441,25 +441,25 @@ class StreamMultiplexer {
     }
 
     // Check if user's exclusive key changed while we were opening
+    // This can happen if the user switches accounts while we're establishing the connection
     const lastKey = this.userToLastKey.get(userId);
     if (lastKey && lastKey !== key) {
-      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Key changed during open (${lastKey} -> ${key}), canceling stale upstream`);
+      logger.debug(`[${this.name}] Key changed during open (old=${key} new=${lastKey}), abandoning stale connection`);
       try { upstream.body && upstream.body.cancel && upstream.body.cancel(); } catch (_) {}
       try { connectionAbort.abort('Stale upstream'); } catch (_) {}
       try { resolveLock(); } catch (_) {}
       
-      // Return 503 instead of 409 to trigger client retry logic
-      // Include a special flag to indicate this is a recoverable race condition
+      // Return a 409 Conflict but with a special abandoned flag
+      // This indicates the connection was abandoned due to account switch
       return { 
         __error: true, 
-        status: 503, 
+        status: 409, 
         response: { 
-          error: 'Stream key changed during connection', 
-          details: 'Account or settings changed while connecting. Please retry.',
-          retryable: true,
-          raceCondition: true 
+          error: 'Connection abandoned - account switched',
+          abandoned: true,
+          reason: 'Account switched during connection establishment' 
         }, 
-        message: 'Key changed during open' 
+        message: 'Connection abandoned (account switched)' 
       };
     }
 
