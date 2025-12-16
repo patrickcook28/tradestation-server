@@ -443,11 +443,24 @@ class StreamMultiplexer {
     // Check if user's exclusive key changed while we were opening
     const lastKey = this.userToLastKey.get(userId);
     if (lastKey && lastKey !== key) {
-      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Abandoning stale upstream for key=${key}`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Key changed during open (${lastKey} -> ${key}), canceling stale upstream`);
       try { upstream.body && upstream.body.cancel && upstream.body.cancel(); } catch (_) {}
       try { connectionAbort.abort('Stale upstream'); } catch (_) {}
       try { resolveLock(); } catch (_) {}
-      return { __error: true, status: 409, response: { error: 'Stale upstream (key changed during open)' }, message: 'Stale upstream' };
+      
+      // Return 503 instead of 409 to trigger client retry logic
+      // Include a special flag to indicate this is a recoverable race condition
+      return { 
+        __error: true, 
+        status: 503, 
+        response: { 
+          error: 'Stream key changed during connection', 
+          details: 'Account or settings changed while connecting. Please retry.',
+          retryable: true,
+          raceCondition: true 
+        }, 
+        message: 'Key changed during open' 
+      };
     }
 
     // Convert Web ReadableStream to Node.js stream
@@ -775,8 +788,8 @@ class StreamMultiplexer {
         }
         
         // Throttle rapid switches to prevent undici HTTP/2 race conditions
-        // Use minimal delay (20ms) to allow cleanup without blocking SSE connection establishment
-        const MIN_SWITCH_DELAY_MS = 20;
+        // Increased delay to 100ms to better handle race conditions
+        const MIN_SWITCH_DELAY_MS = 100;
         if (timeSinceLastSwitch < MIN_SWITCH_DELAY_MS) {
           const waitTime = MIN_SWITCH_DELAY_MS - timeSinceLastSwitch;
           logger.debug(`[${this.name}] Throttling rapid switch, waiting ${waitTime}ms...`);
@@ -789,10 +802,13 @@ class StreamMultiplexer {
         this.userLastSwitch.set(userId, Date.now());
       }
       
+      // Set the key BEFORE starting the subscriber to prevent race conditions
+      // This ensures that if the stream opening is slow, we already have the correct key set
       this.userToLastKey.set(userId, nextKey);
-      logger.debug(`[${this.name}] ✅ Starting addSubscriber for key=${nextKey}`);
+      
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] ✅ Starting addSubscriber for key=${nextKey}`);
       const result = await this.addSubscriber(userId, deps, res);
-      logger.debug(`[${this.name}] ✅ Successfully added subscriber for key=${nextKey}`);
+      if (VERBOSE_LOGGING) logger.debug(`[${this.name}] ✅ Successfully added subscriber for key=${nextKey}`);
       return result;
     } catch (error) {
       logger.error(`[${this.name}] ❌ Error in addExclusiveSubscriber for userId=${userId}, key would be ${this.makeKey(userId, deps)}:`, error);
