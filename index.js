@@ -210,6 +210,7 @@ app.get('/learn/content', asyncHandler(routes.learnRoutes.getLearnContent));
 
 // Add all tradestation routes
 app.get('/', asyncHandler(routes.tradeStationRoutes.handleOAuthCallback));
+app.get('/tradestation/callback', asyncHandler(routes.tradeStationRoutes.handleOAuthCallback));
 app.get('/tradestation/credentials', authenticateToken, asyncHandler(routes.tradeStationRoutes.getStoredCredentials));
 app.put('/tradestation/refresh_token', authenticateToken, asyncHandler(routes.tradeStationRoutes.refreshAccessToken));
 app.get('/tradestation/accounts', authenticateToken, asyncHandler(routes.tradeStationRoutes.getAccounts));
