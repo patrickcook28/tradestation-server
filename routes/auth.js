@@ -303,6 +303,27 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Optional authentication - extracts user if token is present, but doesn't fail if missing
+const optionalAuthenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (token == null) {
+    // No token provided - continue without setting req.user
+    return next();
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
+    if (err) {
+      // Invalid token - continue without setting req.user
+      return next();
+    }
+    // Valid token - set req.user
+    req.user = user;
+    next();
+  });
+};
+
 // Get user settings (includes app_settings and account_defaults)
 const getUserSettings = async (req, res) => {
     try {
@@ -780,6 +801,7 @@ module.exports = {
     register,
     login,
     authenticateToken,
+    optionalAuthenticateToken,
     getUserSettings,
     updateUserSettings,
     setAccountLossLimitLockout,

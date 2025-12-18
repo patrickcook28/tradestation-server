@@ -4,8 +4,8 @@ const pool = require('../db');
 const { createTransport, buildContactNotificationEmail, buildContactConfirmationEmail } = require('../config/email');
 const logger = require('../config/logging');
 
-// Contact form submission
-router.post('/', async (req, res) => {
+// Contact form submission handler (public endpoint - no auth required)
+const postContact = async (req, res) => {
   try {
     console.log('Contact form submission received:', req.method, req.body);
     const { email, subject, message, userId, timestamp } = req.body;
@@ -28,12 +28,18 @@ router.post('/', async (req, res) => {
     // Check if this is a beta access request
     const isBetaRequest = subject.toLowerCase().includes('beta access');
 
+    // Extract userId from token if available (optional)
+    let finalUserId = userId || null;
+    if (!finalUserId && req.user && req.user.id) {
+      finalUserId = req.user.id;
+    }
+
     // Insert contact form submission into database
     const result = await pool.query(
       `INSERT INTO contact_submissions (email, subject, message, user_id, created_at, status)
        VALUES ($1, $2, $3, $4, $5, 'new')
        RETURNING id`,
-      [email, subject, message, userId || null, timestamp || new Date().toISOString()]
+      [email, subject, message, finalUserId, timestamp || new Date().toISOString()]
     );
 
     console.log(`Contact form submission received from ${email}: ${subject}`);
@@ -47,7 +53,7 @@ router.post('/', async (req, res) => {
         email,
         subject,
         message,
-        userId,
+        userId: finalUserId,
         isBetaRequest
       });
       
@@ -90,7 +96,10 @@ router.post('/', async (req, res) => {
       error: 'Failed to submit contact form. Please try again later.' 
     });
   }
-});
+};
+
+// Register the POST handler in router (will be overridden by public route in index.js)
+router.post('/', postContact);
 
 // Get contact submissions (admin only)
 router.get('/submissions', async (req, res) => {
@@ -165,3 +174,4 @@ router.put('/submissions/:id', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.postContact = postContact;

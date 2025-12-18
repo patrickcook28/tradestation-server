@@ -11,7 +11,7 @@ const backgroundStreamManager = require('./utils/backgroundStreamManager');
 const alertEngine = require('./workers/alertEngine');
 const positionLossEngine = require('./workers/positionLossEngine');
 const logger = require('./config/logging');
-const { authenticateToken } = require('./routes/auth');
+const { authenticateToken, optionalAuthenticateToken } = require('./routes/auth');
 const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
 
 dotenv.config({ path: './.env'});
@@ -237,7 +237,8 @@ app.get('/tradestation/marketdata/stream/marketdepth/aggregates/:ticker', authen
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
 
-// Contact routes
+// Contact routes - POST is public but extracts user ID if token present, GET/PUT require auth
+app.post('/contact', optionalAuthenticateToken, asyncHandler(routes.contactRoutes.postContact));
 app.use('/contact', authenticateToken, routes.contactRoutes);
 
 // Bug reports routes
