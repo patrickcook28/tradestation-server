@@ -192,7 +192,7 @@ router.post('/submissions/:id/send-beta-code', async (req, res) => {
 
     // Get the submission
     const submissionResult = await pool.query(
-      'SELECT email FROM contact_submissions WHERE id = $1',
+      'SELECT email, user_id, created_at FROM contact_submissions WHERE id = $1',
       [id]
     );
 
@@ -200,7 +200,8 @@ router.post('/submissions/:id/send-beta-code', async (req, res) => {
       return res.status(404).json({ error: 'Contact submission not found' });
     }
 
-    const email = submissionResult.rows[0].email;
+    const submission = submissionResult.rows[0];
+    const email = submission.email;
 
     // Send the beta welcome email
     try {
@@ -220,6 +221,26 @@ router.post('/submissions/:id/send-beta-code', async (req, res) => {
          WHERE id = $1`,
         [id]
       );
+
+      // Create or update beta tracking record
+      const now = new Date().toISOString();
+      await pool.query(`
+        INSERT INTO beta_tracking (
+          email, user_id, contact_submission_id, beta_code,
+          requested_at, started_at, intro_email_sent_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $6)
+        ON CONFLICT (email) 
+        DO UPDATE SET
+          user_id = COALESCE($2, beta_tracking.user_id),
+          contact_submission_id = COALESCE($3, beta_tracking.contact_submission_id),
+          beta_code = COALESCE($4, beta_tracking.beta_code),
+          requested_at = COALESCE($5, beta_tracking.requested_at),
+          started_at = COALESCE($6, beta_tracking.started_at),
+          intro_email_sent_at = COALESCE($6, beta_tracking.intro_email_sent_at)
+      `, [email, submission.user_id, id, betaCode, submission.created_at, now]);
+
+      logger.info(`Beta tracking record created/updated for ${email}`);
 
       res.json({ 
         success: true, 

@@ -664,7 +664,7 @@ What You're Getting:
 • No credit card required
 
 Important: You're Testing Software
-PrecisionTrader is in beta. Bugs might exist. Start with paper trading if you're uncertain, or go live if you're comfortable—it's your decision and your risk. We recommend paper trading first to test the workflow.
+PrecisionTrader is in beta. Bugs might exist. We recommend starting with paper trading to test the workflow. You're welcome to go live when ready.
 
 Your Mission: 30 Days of Real Testing
 • Place at least 5-10 trades using PrecisionTrader
@@ -780,7 +780,7 @@ Questions? Just reply to this email.
                     <td style="padding-top:20px;">
                       <div style="background-color:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px;">
                         <p style="margin:0;color:#fbbf24;font-size:13px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-                          ⚠️ <strong>Important:</strong> PrecisionTrader is in beta. Start with paper trading to test the workflow, or go live if comfortable. Your decision, your risk.
+                          ⚠️ <strong>Important:</strong> PrecisionTrader is in beta. We recommend starting with paper trading to test the workflow. You're welcome to go live when ready.
                         </p>
                       </div>
                     </td>

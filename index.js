@@ -209,6 +209,8 @@ app.get('/client_config', authenticateToken, asyncHandler(routes.clientConfigRou
 app.get('/learn/content', asyncHandler(routes.learnRoutes.getLearnContent));
 
 // Add all tradestation routes
+// Debug endpoint - comment out in production or add authenticateToken middleware
+// app.get('/tradestation/debug/config', asyncHandler(routes.tradeStationRoutes.debugOAuthConfig));
 app.get('/', asyncHandler(routes.tradeStationRoutes.handleOAuthCallback));
 app.get('/tradestation/callback', asyncHandler(routes.tradeStationRoutes.handleOAuthCallback));
 app.get('/tradestation/credentials', authenticateToken, asyncHandler(routes.tradeStationRoutes.getStoredCredentials));
@@ -237,6 +239,9 @@ app.get('/tradestation/marketdata/stream/marketdepth/aggregates/:ticker', authen
 
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
+
+// Beta tracking routes
+app.use('/beta', routes.betaRoutes);
 
 // Contact routes - POST is public but extracts user ID if token present, GET/PUT require auth
 app.post('/contact', optionalAuthenticateToken, asyncHandler(routes.contactRoutes.postContact));

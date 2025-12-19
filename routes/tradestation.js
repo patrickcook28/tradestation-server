@@ -61,6 +61,19 @@ const getLocalHistoricalOrders = async (req, res) => {
   }
 };
 
+// Debug endpoint to verify OAuth configuration (no auth required for debugging)
+const debugOAuthConfig = async (req, res) => {
+  res.json({
+    clientId: process.env.TRADESTATION_CLIENT_ID || 'NOT_SET',
+    clientIdLength: process.env.TRADESTATION_CLIENT_ID?.length || 0,
+    hasClientSecret: !!process.env.TRADESTATION_CLIENT_SECRET,
+    clientSecretLength: process.env.TRADESTATION_CLIENT_SECRET?.length || 0,
+    redirectUri: process.env.TRADESTATION_REDIRECT_URI || 'NOT_SET',
+    audience: process.env.TRADESTATION_AUDIENCE || 'NOT_SET',
+    scope: process.env.TRADESTATION_SCOPE || 'NOT_SET'
+  });
+};
+
 const handleOAuthCallback = async (req, res) => {
   const code = req.query.code;
   const token = req.query.state;
@@ -102,8 +115,12 @@ const handleOAuthCallback = async (req, res) => {
 
   console.log('📤 Exchanging code for tokens...');
   console.log('Token URL:', token_url);
-  console.log('Client ID:', process.env.TRADESTATION_CLIENT_ID ? `${process.env.TRADESTATION_CLIENT_ID.substring(0, 10)}...` : 'MISSING');
+  console.log('Client ID (full):', process.env.TRADESTATION_CLIENT_ID || 'MISSING');
+  console.log('Client Secret exists:', !!process.env.TRADESTATION_CLIENT_SECRET);
+  console.log('Client Secret length:', process.env.TRADESTATION_CLIENT_SECRET?.length || 0);
   console.log('Redirect URI:', process.env.TRADESTATION_REDIRECT_URI);
+  console.log('Grant type:', data.grant_type);
+  console.log('Code length:', code.length);
 
   try {
     const response = await fetch(token_url, {
@@ -649,6 +666,7 @@ const streamMarketAggregates = async (req, res) => {
 };
 
 module.exports = {
+  debugOAuthConfig,
   handleOAuthCallback,
   refreshAccessToken,
   getStoredCredentials,
