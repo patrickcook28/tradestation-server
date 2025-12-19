@@ -1,0 +1,139 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BETA USER ONBOARDING GUIDE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUICK START: Onboard a Beta User in 2 Steps
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When you receive a beta request through the Contact Us page:
+
+1. Generate and send a beta code:
+   
+   cd tradestation-server
+   node scripts/send_beta_code.js user@example.com
+
+   This will:
+   ✓ Generate a unique 6-character code (e.g., QAZWSC)
+   ✓ Save it to the database
+   ✓ Send the streamlined beta welcome email
+
+2. Done! The user receives an email with:
+   - Their beta code
+   - Registration instructions
+   - 30-day trial details
+   - Clear testing guidelines
+
+
+ALTERNATIVE: Generate Code Without Sending Email
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you want to generate a code and send it manually:
+
+   node scripts/generate_beta_code.js
+   
+   # With options:
+   node scripts/generate_beta_code.js --description "VIP beta user" --max-uses 5
+
+This outputs the code for you to copy and send however you prefer.
+
+
+ADMIN API ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you prefer using the API directly (requires superuser auth):
+
+1. Auto-generate a beta code:
+   POST /referral/admin/generate-beta-code
+   Body: { "description": "Beta user", "max_uses": 1 }
+
+2. Send beta code to a contact submission:
+   POST /contact/submissions/:id/send-beta-code
+   Body: { "betaCode": "ABCDEF" }
+
+3. Get all referral codes:
+   GET /referral/admin/codes
+
+4. Manually create a custom code:
+   POST /referral/admin/codes
+   Body: { "code": "CUSTOM", "description": "...", "max_uses": 10 }
+
+
+BETA EMAIL CONTENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The email has been streamlined to:
+✓ Welcome them warmly but concisely
+✓ Show their beta code prominently
+✓ Give clear registration instructions
+✓ Explain what they're getting (30 days free, all features)
+✓ Set expectations (beta = bugs may exist)
+✓ Define their mission (5-10 trades, use key features)
+✓ Provide bug reporting instructions
+✓ Mention the reward (1 free month for feedback)
+✓ Keep it focused and action-oriented
+
+Less wordy than your original, but still makes them feel valued!
+
+
+USER REGISTRATION FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Users can apply their beta code in two ways:
+
+1. During Registration:
+   - Go to /register
+   - Fill out the form
+   - Enter beta code in the "Referral Code" field
+   - System automatically grants beta access
+
+2. After Registration:
+   - Go to /apply-referral-code
+   - Enter their beta code
+   - System upgrades them to beta user
+
+
+TRACKING BETA CODES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+View all codes and their usage:
+- Each code tracks current_uses vs max_uses
+- Codes auto-increment usage when applied
+- Set max_uses to limit how many times a code can be used
+- Default is 1 use per code
+
+
+EXAMPLE WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. User fills out "Beta Access Request" on Contact Us page
+2. You receive admin notification email
+3. Run: node scripts/send_beta_code.js user@example.com
+4. User receives beta welcome email with code ABCDEF
+5. User registers with the code
+6. System marks them as beta_user=true
+7. They get 30 days free access to test
+
+
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If email fails:
+- Check RESEND_API_KEY environment variable
+- Check EMAIL_FROM is set to your verified domain
+- View logs in the console output
+
+If code generation fails:
+- Script tries 10 times to generate unique code
+- If all fail, there's a collision issue (very rare with 26^6 combinations)
+
+Code not working:
+- Verify code exists: SELECT * FROM referral_codes WHERE code = 'ABCDEF';
+- Check is_active = true
+- Check current_uses < max_uses
+- Code must be exact match (case-insensitive)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+That's it! Simple and streamlined beta onboarding.
+

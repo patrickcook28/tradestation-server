@@ -2,6 +2,25 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+
+/**
+ * Generate a unique 6-character alphabetic beta code
+ * Format: ABCDEF (all uppercase letters)
+ */
+function generateBetaCode() {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let code = '';
+  
+  // Generate 6 random letters
+  const randomBytes = crypto.randomBytes(6);
+  for (let i = 0; i < 6; i++) {
+    const index = randomBytes[i] % letters.length;
+    code += letters[index];
+  }
+  
+  return code;
+}
 
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
@@ -130,6 +149,62 @@ router.post('/admin/codes', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Error creating referral code:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Admin: Auto-generate a unique beta code
+router.post('/admin/generate-beta-code', authenticateToken, async (req, res) => {
+    try {
+        // Check if user is superuser
+        const userResult = await db.query(
+            'SELECT superuser FROM users WHERE id = $1',
+            [req.user.id]
+        );
+
+        if (!userResult.rows[0]?.superuser) {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        const { description, max_uses } = req.body;
+
+        // Generate unique code (try up to 10 times)
+        let code;
+        let attempts = 0;
+        let isUnique = false;
+
+        while (!isUnique && attempts < 10) {
+            code = generateBetaCode();
+            
+            const existingCode = await db.query(
+                'SELECT id FROM referral_codes WHERE code = $1',
+                [code]
+            );
+
+            if (existingCode.rows.length === 0) {
+                isUnique = true;
+            }
+            attempts++;
+        }
+
+        if (!isUnique) {
+            return res.status(500).json({ error: 'Failed to generate unique code after 10 attempts' });
+        }
+
+        const result = await db.query(
+            `INSERT INTO referral_codes (code, description, is_active, max_uses, current_uses)
+             VALUES ($1, $2, true, $3, 0)
+             RETURNING *`,
+            [code, description || 'Auto-generated beta code', max_uses || 1]
+        );
+
+        res.json({ 
+            success: true, 
+            message: 'Beta code generated successfully',
+            code: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error generating beta code:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

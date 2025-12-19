@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { createTransport, buildContactNotificationEmail, buildContactConfirmationEmail } = require('../config/email');
+const { createTransport, buildContactNotificationEmail, buildContactConfirmationEmail, buildBetaWelcomeEmail } = require('../config/email');
 const logger = require('../config/logging');
 
 // Contact form submission handler (public endpoint - no auth required)
@@ -169,6 +169,73 @@ router.put('/submissions/:id', async (req, res) => {
     console.error('Error updating contact submission:', error);
     res.status(500).json({ 
       error: 'Failed to update contact submission' 
+    });
+  }
+});
+
+// Send beta code to user (admin only)
+router.post('/submissions/:id/send-beta-code', async (req, res) => {
+  try {
+    const userId = req.user && req.user.id;
+    // Verify superuser from DB
+    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [userId]);
+    if (!userResult.rows.length || !userResult.rows[0].superuser) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { id } = req.params;
+    const { betaCode } = req.body;
+
+    if (!betaCode) {
+      return res.status(400).json({ error: 'Beta code is required' });
+    }
+
+    // Get the submission
+    const submissionResult = await pool.query(
+      'SELECT email FROM contact_submissions WHERE id = $1',
+      [id]
+    );
+
+    if (submissionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Contact submission not found' });
+    }
+
+    const email = submissionResult.rows[0].email;
+
+    // Send the beta welcome email
+    try {
+      const transport = createTransport();
+      const mailOptions = buildBetaWelcomeEmail({
+        to: email,
+        betaCode: betaCode
+      });
+      
+      await transport.sendMail(mailOptions);
+      logger.info(`Beta welcome email sent to ${email} with code ${betaCode}`);
+
+      // Update submission status to resolved
+      await pool.query(
+        `UPDATE contact_submissions 
+         SET status = 'resolved', updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+
+      res.json({ 
+        success: true, 
+        message: `Beta code ${betaCode} sent to ${email}` 
+      });
+    } catch (emailError) {
+      logger.error('Failed to send beta welcome email:', emailError);
+      res.status(500).json({ 
+        error: 'Failed to send beta welcome email' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Error sending beta code:', error);
+    res.status(500).json({ 
+      error: 'Failed to send beta code' 
     });
   }
 });

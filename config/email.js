@@ -641,6 +641,194 @@ PrecisionTrader - Trade Smarter
   return { from, to, subject: emailSubject, text, html };
 }
 
+/**
+ * Build beta welcome email
+ */
+function buildBetaWelcomeEmail({ to, betaCode }) {
+  const from = process.env.EMAIL_FROM || 'support@precisiontrader.tech';
+  const frontendUrl = 'https://precisiontrader.tech';
+  const emailSubject = '🚀 Welcome to PrecisionTrader Beta';
+  
+  const text = `
+Welcome to PrecisionTrader Beta!
+
+You're one of a select group of traders testing our platform before we launch publicly. Your feedback over the next 30 days will directly shape what we build next.
+
+Your Beta Code: ${betaCode}
+
+Register at ${frontendUrl}/register and include the beta code, or add it at ${frontendUrl}/apply-referral-code if you already have an account.
+
+What You're Getting:
+• 30 days of completely free access
+• All features included
+• No credit card required
+
+Important: You're Testing Software
+PrecisionTrader is in beta. Bugs might exist. Start with paper trading if you're uncertain, or go live if you're comfortable—it's your decision and your risk. We recommend paper trading first to test the workflow.
+
+Your Mission: 30 Days of Real Testing
+• Place at least 5-10 trades using PrecisionTrader
+• Use bracket orders, position sizing, and daily loss limits
+• Complete 2-3 journal entries after trades close
+• Try the liquidity overlay if you trade equities
+
+Report Bugs & Feedback:
+Email: support@precisiontrader.tech
+Subject: "BUG: [what happened]" or "FEEDBACK: [your idea]"
+
+Your Reward:
+Complete our brief survey at the end of your 30-day trial and get 1 free month when we launch.
+
+Need Help?
+• Sign up for TradeStation if you don't have an account
+• Link your account on the Trade page
+
+Most traders use the same platform everyone else uses. You're trying something new because you believe better execution matters.
+
+Let's make something great.
+
+— The PrecisionTrader Team
+
+Questions? Just reply to this email.
+  `.trim();
+
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+  </head>
+  <body style="margin:0;padding:0;background-color:#111827;color:#e6edf3;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#111827;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#151c2b;border-radius:12px;overflow:hidden;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #1f2937;background-color:#151c2b;">
+                <div style="font-weight:600;color:#e6edf3;font-size:18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">🚀 PrecisionTrader Beta</div>
+              </td>
+            </tr>
+            <!-- Content -->
+            <tr>
+              <td style="padding:24px;background-color:#151c2b;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td style="padding-bottom:20px;">
+                      <h2 style="margin:0 0 12px 0;color:#e6edf3;font-size:22px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Welcome to the Beta!</h2>
+                      <p style="margin:0;color:#c7d2fe;font-size:15px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        You're one of a select group testing our platform. Your feedback will directly shape what we build next.
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Beta Code Box -->
+                  <tr>
+                    <td style="padding-bottom:20px;">
+                      <div style="background-color:#1f2937;border-radius:8px;padding:20px;text-align:center;border:2px solid #3b82f6;">
+                        <div style="color:#9ca3af;font-size:13px;margin-bottom:8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Your Beta Code</div>
+                        <div style="color:#60a5fa;font-size:32px;font-weight:700;letter-spacing:4px;font-family:monospace;">${betaCode}</div>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- CTA Button -->
+                  <tr>
+                    <td align="center" style="padding-bottom:24px;">
+                      <a href="${frontendUrl}/register" style="display:inline-block;background-color:#3b82f6;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:600;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Register Now</a>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding-bottom:16px;">
+                      <p style="margin:0 0 4px 0;color:#9ca3af;font-size:13px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Already have an account? <a href="${frontendUrl}/apply-referral-code" style="color:#60a5fa;text-decoration:none;">Add your code here</a>
+                      </p>
+                    </td>
+                  </tr>
+
+                  <!-- What You Get -->
+                  <tr>
+                    <td style="background-color:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px;">
+                      <div style="color:#e6edf3;font-size:15px;font-weight:600;margin-bottom:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">What You're Getting</div>
+                      <ul style="margin:0;padding-left:20px;color:#cbd5e1;line-height:1.7;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        <li>30 days free access, all features</li>
+                        <li>No credit card required</li>
+                        <li>1 free month reward for completing feedback survey</li>
+                      </ul>
+                    </td>
+                  </tr>
+
+                  <!-- Your Mission -->
+                  <tr>
+                    <td style="background-color:#1f2937;border-radius:8px;padding:16px;margin-top:16px;">
+                      <div style="color:#e6edf3;font-size:15px;font-weight:600;margin-bottom:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Your 30-Day Mission</div>
+                      <ul style="margin:0;padding-left:20px;color:#cbd5e1;line-height:1.7;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        <li>Place 5-10 trades (paper or live—your choice)</li>
+                        <li>Use bracket orders & position sizing</li>
+                        <li>Complete 2-3 journal entries</li>
+                        <li>Report bugs & share feedback</li>
+                      </ul>
+                    </td>
+                  </tr>
+
+                  <!-- Important Note -->
+                  <tr>
+                    <td style="padding-top:20px;">
+                      <div style="background-color:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px;">
+                        <p style="margin:0;color:#fbbf24;font-size:13px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                          ⚠️ <strong>Important:</strong> PrecisionTrader is in beta. Start with paper trading to test the workflow, or go live if comfortable. Your decision, your risk.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Support -->
+                  <tr>
+                    <td style="padding-top:20px;text-align:center;">
+                      <p style="margin:0;color:#9ca3af;font-size:13px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Report bugs: <a href="mailto:support@precisiontrader.tech" style="color:#60a5fa;text-decoration:none;">support@precisiontrader.tech</a><br>
+                        Use "BUG: [issue]" or "FEEDBACK: [idea]" in subject
+                      </p>
+                    </td>
+                  </tr>
+
+                  <!-- Closing -->
+                  <tr>
+                    <td style="padding-top:24px;border-top:1px solid #374151;">
+                      <p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Most traders use the same platform everyone else uses.<br>You're trying something new because you believe better execution matters.
+                      </p>
+                      <p style="margin:8px 0 0 0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Let's make something great.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="padding:16px 24px;background-color:#1f2937;text-align:center;">
+                <p style="margin:0;color:#9ca3af;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                  Questions? Just reply to this email.<br>
+                  — The PrecisionTrader Team
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+
+  return { from, to, subject: emailSubject, text, html };
+}
+
 module.exports = { 
   createTransport, 
   buildResetEmail, 
@@ -649,7 +837,8 @@ module.exports = {
   buildBugReportNotificationEmail,
   buildBugReportConfirmationEmail,
   buildPriceAlertEmail,
-  buildPositionLossEmail
+  buildPositionLossEmail,
+  buildBetaWelcomeEmail
 };
 
 

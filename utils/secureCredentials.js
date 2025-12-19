@@ -69,19 +69,32 @@ async function getUserCredentials(userId) {
 }
 
 async function setUserCredentials(userId, { access_token, refresh_token, expires_at }) {
+  console.log(`[setUserCredentials] Setting credentials for user ${userId}`);
+  console.log(`[setUserCredentials] Has access_token: ${!!access_token}, length: ${access_token?.length}`);
+  console.log(`[setUserCredentials] Has refresh_token: ${!!refresh_token}, length: ${refresh_token?.length}`);
+  console.log(`[setUserCredentials] Expires at: ${expires_at}`);
+  
   const encAccess = encryptToken(access_token);
   const encRefresh = encryptToken(refresh_token);
+  console.log(`[setUserCredentials] Tokens encrypted successfully`);
+  
   const existing = await pool.query('SELECT user_id FROM api_credentials WHERE user_id = $1', [userId]);
+  console.log(`[setUserCredentials] Existing credentials found: ${existing.rows.length > 0}`);
+  
   if (existing.rows.length > 0) {
+    console.log(`[setUserCredentials] Updating existing credentials`);
     await pool.query(
       'UPDATE api_credentials SET access_token = $1, refresh_token = $2, expires_at = $3 WHERE user_id = $4',
       [encAccess, encRefresh, expires_at, userId]
     );
+    console.log(`[setUserCredentials] ✅ Update successful`);
   } else {
+    console.log(`[setUserCredentials] Inserting new credentials`);
     await pool.query(
       'INSERT INTO api_credentials (user_id, access_token, refresh_token, expires_at) VALUES ($1, $2, $3, $4)',
       [userId, encAccess, encRefresh, expires_at]
     );
+    console.log(`[setUserCredentials] ✅ Insert successful`);
   }
 }
 
