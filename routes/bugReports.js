@@ -236,5 +236,38 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// Delete bug report (admin only)
+router.delete('/:id', async (req, res) => {
+  try {
+    const userId = req.user && req.user.id;
+    // Verify superuser from DB
+    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [userId]);
+    if (!userResult.rows.length || !userResult.rows[0].superuser) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { id } = req.params;
+    const result = await pool.query(
+      'DELETE FROM bug_reports WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Bug report not found' });
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Bug report deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Error deleting bug report:', error);
+    res.status(500).json({ 
+      error: 'Failed to delete bug report' 
+    });
+  }
+});
+
 module.exports = router;
 
