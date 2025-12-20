@@ -10,8 +10,8 @@ const learnContent = {
       {
         id: 'connecting-broker',
         title: 'Connecting Your Broker',
-        content: 'Connect your TradeStation account to get started. Navigate to Settings and click "Connect TradeStation Account". You\'ll be redirected to TradeStation\'s secure authorization page. After authorizing, you\'ll be redirected back to PrecisionTrader with your account connected.',
-        keywords: ['broker', 'connect', 'tradestation', 'account', 'authorization', 'settings']
+        content: 'Connect your TradeStation account to get started. Navigate to the Trading page and click "Link Data Provider" to connect your account. You\'ll be redirected to TradeStation\'s secure authorization page. After authorizing, you\'ll be redirected back to PrecisionTrader with your account connected.',
+        keywords: ['broker', 'connect', 'tradestation', 'account', 'authorization', 'link data provider', 'trading page']
       },
       {
         id: 'selecting-account',
@@ -22,8 +22,8 @@ const learnContent = {
       {
         id: 'first-bracket-trade',
         title: 'Placing Your First Trade with Bracket Orders',
-        content: 'Select a ticker from your watchlist or search for one. Set your entry price, stop loss, and take profit levels. PrecisionTrader will automatically calculate your position size based on your risk settings. Click "Place Bracket Order" to execute. You can drag the stop loss and take profit lines on the chart to adjust them before placing.',
-        keywords: ['bracket order', 'first trade', 'entry', 'stop loss', 'take profit', 'position size', 'risk', 'drag', 'chart']
+        content: 'Select a ticker from your watchlist or search for one. Enable targeting mode by pressing the target icon next to the quantity input. Select the bracket type from the dropdown (e.g., 1 Take Profit, 2 Take Profits). Drag your entry, stop loss, and take profit levels directly on the chart. PrecisionTrader will automatically calculate your position size based on your risk settings. Click "Buy" or "Sell" to submit your first bracket order. We recommend trying on a paper trading (SIM) account first to ensure everything is working correctly before trading with real money.',
+        keywords: ['bracket order', 'first trade', 'entry', 'stop loss', 'take profit', 'position size', 'risk', 'drag', 'chart', 'targeting mode', 'target icon', 'bracket type', 'paper trading', 'SIM account']
       }
     ]
   },
