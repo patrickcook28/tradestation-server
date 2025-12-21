@@ -347,9 +347,10 @@ class StreamMultiplexer {
       
       // Handle 401 with token refresh and retry
       if (!upstream.ok && upstream.status === 401) {
+        logger.debug(`[${this.name}] Received 401, attempting token refresh for key=${key}`);
         try {
           await refreshAccessTokenForUserLocked(userId);
-          if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Retrying upstream open after token refresh for key=${key}`);
+          logger.debug(`[${this.name}] Token refreshed successfully, retrying upstream open for key=${key}`);
           
           // Create new timeout for retry
           const retryTimeoutAbort = new AbortController();
@@ -361,18 +362,51 @@ class StreamMultiplexer {
           retryTimeoutAbort.signal.addEventListener('abort', retryTimeoutListener);
           
           try {
+            const refreshedToken = await getUserAccessToken(userId);
             upstream = await fetch(url, { 
               method: 'GET', 
-              headers: { 'Authorization': `Bearer ${await getUserAccessToken(userId)}` },
+              headers: { 'Authorization': `Bearer ${refreshedToken}` },
               signal: connectionAbort.signal
             });
+            
+            if (VERBOSE_LOGGING) logger.debug(`[${this.name}] Retry fetch completed (status: ${upstream.status}) for key=${key}`);
+            
+            // If retry still returns 401, log and return error
+            if (!upstream.ok && upstream.status === 401) {
+              logger.error(`[${this.name}] ⚠️ Retry still returned 401 after token refresh for key=${key} - token refresh may have failed or token is invalid`);
+              const err = { __error: true, status: 401, response: { error: 'Unauthorized', details: 'Token refresh did not resolve authentication issue' }, message: 'Authentication failed after token refresh' };
+              try { rejectLock(err); } catch (_) {}
+              try { connectionAbort.abort('Retry still 401'); } catch (_) {}
+              return err;
+            }
           } finally {
             clearTimeout(retryTimeoutHandle);
             retryTimeoutAbort.signal.removeEventListener('abort', retryTimeoutListener);
             retryTimeoutAbort.abort();
           }
         } catch (refreshErr) {
-          // Token refresh failed, continue with original 401 response
+          // Token refresh failed - log the error
+          logger.error(`[${this.name}] ❌ Token refresh failed for key=${key}:`, refreshErr?.message || refreshErr);
+          
+          // If it's a client ID mismatch, return a specific error
+          if (refreshErr.code === 'CLIENT_ID_MISMATCH' || refreshErr.requiresReauth) {
+            const err = { 
+              __error: true, 
+              status: 401, 
+              response: { 
+                error: 'Authentication required', 
+                details: refreshErr.message || 'Please re-authenticate with TradeStation',
+                requiresReauth: true,
+                code: 'CLIENT_ID_MISMATCH'
+              }, 
+              message: refreshErr.message || 'Authentication required' 
+            };
+            try { rejectLock(err); } catch (_) {}
+            try { connectionAbort.abort('Client ID mismatch'); } catch (_) {}
+            return err;
+          }
+          
+          // Continue with original 401 response - will be handled below
         }
       }
     } catch (networkErr) {

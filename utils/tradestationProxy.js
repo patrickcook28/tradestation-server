@@ -164,6 +164,12 @@ module.exports = {
               ...headers,
             },
           });
+          
+          // If retry still returns 401, log and return error
+          if (upstream.status === 401) {
+            try { captureException(new Error('Token refresh did not resolve 401'), { scope: 'streamTradestation-refresh-retry-failed', path }); } catch (_) {}
+            return res.status(401).json({ error: 'Unauthorized', details: 'Token refresh did not resolve authentication issue' });
+          }
         } catch (err) {
           try { captureException(err, { scope: 'streamTradestation-refresh', path }); } catch (_) {}
           return res.status(401).json({ error: 'Unauthorized' });
