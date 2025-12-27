@@ -314,7 +314,7 @@ router.get('/session-activities', async (req, res) => {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
-    const { limit = 100, offset = 0, event_type, user_id } = req.query;
+    const { limit = 100, offset = 0, event_type, user_id, user_type } = req.query;
     
     // Build query with optional filters
     let whereClause = 'WHERE 1=1';
@@ -333,7 +333,14 @@ router.get('/session-activities', async (req, res) => {
       queryParams.push(user_id);
     }
 
-    // Get session activities with user info
+    // Filter by user type: 'logged_in' or 'anonymous'
+    if (user_type === 'logged_in') {
+      whereClause += ` AND user_id IS NOT NULL`;
+    } else if (user_type === 'anonymous') {
+      whereClause += ` AND user_id IS NULL`;
+    }
+
+    // Get session activities with user info and UTM source
     const activitiesQuery = `
       SELECT 
         ae.id,
@@ -344,7 +351,10 @@ router.get('/session-activities', async (req, res) => {
         ae.user_agent,
         ae.ip_address,
         ae.created_at,
-        u.email
+        u.email,
+        ae.event_data->'utm_params'->>'utm_source' as utm_source,
+        ae.event_data->'utm_params'->>'utm_medium' as utm_medium,
+        ae.event_data->'utm_params'->>'utm_campaign' as utm_campaign
       FROM analytics_events ae
       LEFT JOIN users u ON ae.user_id = u.id
       ${whereClause}
