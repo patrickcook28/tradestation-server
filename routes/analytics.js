@@ -43,11 +43,12 @@ router.post('/track', async (req, res) => {
     const finalUserId = userId || data?.parameters?.user_id || null;
 
     // Prepare analytics record
+    // Pass data object directly - PostgreSQL JSONB will handle conversion automatically
     const analyticsRecord = {
       event_type: event_type, // Ensure it's explicitly set and validated
       user_id: finalUserId,
       session_id: data?.session_id || data?.parameters?.session_id || 'unknown_session',
-      event_data: JSON.stringify(data), // Stringify for JSONB storage
+      event_data: data, // Pass object directly - PostgreSQL JSONB handles conversion
       user_agent,
       referrer,
       screen_resolution,
