@@ -5,7 +5,7 @@ const { authenticateToken } = require('./auth');
 const logger = require('../config/logging');
 
 /**
- * Get all beta users with their tracking data (admin only)
+ * Get all early access / beta users with their tracking data (admin only)
  */
 router.get('/tracking', authenticateToken, async (req, res) => {
   try {
@@ -19,6 +19,8 @@ router.get('/tracking', authenticateToken, async (req, res) => {
       SELECT 
         bt.*,
         u.beta_user,
+        u.early_access,
+        u.early_access_started_at,
         u.referral_code as user_referral_code,
         cs.subject as request_subject,
         cs.message as request_message,
@@ -26,7 +28,11 @@ router.get('/tracking', authenticateToken, async (req, res) => {
       FROM beta_tracking bt
       LEFT JOIN users u ON bt.user_id = u.id
       LEFT JOIN contact_submissions cs ON bt.contact_submission_id = cs.id
-      ORDER BY bt.started_at DESC NULLS LAST, bt.requested_at DESC NULLS LAST, bt.created_at DESC
+      WHERE u.early_access = TRUE OR u.beta_user = TRUE
+      ORDER BY 
+        COALESCE(u.early_access_started_at, bt.started_at) DESC NULLS LAST, 
+        bt.requested_at DESC NULLS LAST, 
+        bt.created_at DESC
     `);
 
     res.json({ success: true, betaUsers: result.rows });
@@ -54,6 +60,8 @@ router.get('/tracking/:id', authenticateToken, async (req, res) => {
         bt.*,
         u.email as user_email,
         u.beta_user,
+        u.early_access,
+        u.early_access_started_at,
         u.referral_code as user_referral_code,
         cs.subject as request_subject,
         cs.message as request_message,
@@ -319,6 +327,7 @@ router.get('/tracking/pending-surveys', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 

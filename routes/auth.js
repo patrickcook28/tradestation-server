@@ -2,11 +2,15 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
 const crypto = require('crypto');
-const { createTransport, buildResetEmail } = require('../config/email');
+const { createTransport, buildResetEmail, buildVerificationCodeEmail } = require('../config/email');
 const logger = require("../config/logging");
 
 const register = async (req, res) => {
     const { email, password, password_confirm, referral_code } = req.body;
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+    
+    // Normalize email to lowercase
+    const normalizedEmail = email.toLowerCase().trim();
 
     // Enforce moderate password complexity at registration
     const complexity = validatePasswordComplexity(password);
@@ -14,10 +18,46 @@ const register = async (req, res) => {
         return res.status(400).json({ error: complexity.message });
     }
 
-    pool.query('SELECT email FROM users WHERE email = $1', [email], async (error, result) => {
+    pool.query('SELECT email, email_verified FROM users WHERE LOWER(email) = $1', [normalizedEmail], async (error, result) => {
         if(error){
             return res.status(400).json({ error: 'Failed to check if user exists' })
         } else if( result.rows.length > 0 ) {
+            // If user exists but email is not verified, allow them to get a new verification code
+            if (!result.rows[0].email_verified) {
+                // Generate new verification code
+                const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                
+                try {
+                    // Store new verification code
+                    const insertResult = await pool.query(
+                        `INSERT INTO email_verification_codes (email, code, expires_at, ip_address) 
+                         VALUES ($1, $2, NOW() + INTERVAL '15 minutes', $3) 
+                         RETURNING expires_at`,
+                        [normalizedEmail, verificationCode, clientIp]
+                    );
+                    
+                    logger.info(`New verification code ${verificationCode} generated for unverified user ${normalizedEmail}`);
+                    
+                    // Send verification email
+                    const transport = createTransport();
+                    const mail = buildVerificationCodeEmail({ to: normalizedEmail, code: verificationCode });
+                    await transport.sendMail(mail);
+                    
+                    logger.info(`Verification email resent to unverified user ${normalizedEmail}`);
+                    
+                    return res.json({ 
+                        success: true, 
+                        requiresVerification: true,
+                        email: normalizedEmail,
+                        message: 'Account exists but not verified. New verification code sent to your email.'
+                    });
+                } catch (emailError) {
+                    console.error('Error sending verification email:', emailError);
+                    return res.status(500).json({ error: 'Failed to send verification email' });
+                }
+            }
+            
+            // Email is already in use and verified
             return res.status(400).json({ error: 'Email is already in use' })
         } else if(password !== password_confirm) {
             return res.status(400).json({ error: 'Password Didn\'t Match!'})
@@ -25,9 +65,11 @@ const register = async (req, res) => {
 
         let hashedPassword = await bcrypt.hash(password, 8)
         let beta_user = false
+        let early_access = true  // All new users get early access
         let final_referral_code = null
+        const earlyAccessStartTime = new Date();
 
-        // If referral code is provided, validate it and set beta_user to true
+        // If referral code is provided, validate it and set beta_user to true for backward compatibility
         if (referral_code) {
             try {
                 const referralResult = await pool.query(
@@ -64,35 +106,71 @@ const register = async (req, res) => {
         const acceptanceTimestamp = new Date();
 
         pool.query(
-            'INSERT INTO users (email, password, beta_user, referral_code, tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [email, hashedPassword, beta_user, final_referral_code, acceptanceTimestamp, acceptanceTimestamp, acceptanceTimestamp], 
+            'INSERT INTO users (email, password, beta_user, referral_code, early_access, early_access_started_at, tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+            [normalizedEmail, hashedPassword, beta_user, final_referral_code, early_access, earlyAccessStartTime, acceptanceTimestamp, acceptanceTimestamp, acceptanceTimestamp], 
             async (error, result) => {
                 if(error) {
                     console.error('Database error during user creation:', error);
                     return res.status(400).json({ error: 'Failed to create new user' })
                 } else {
-                    console.log('Insert result:', result);
-                    console.log('Result rows:', result.rows);
-                    console.log('Result rows length:', result.rows.length);
-                    
                     if (!result.rows || result.rows.length === 0) {
                         console.error('No rows returned from INSERT');
                         return res.status(500).json({ error: 'User created but no data returned' })
                     }
                     
                     const newUser = result.rows[0];
-                    console.log('New user data:', newUser);
                     
                     // Save current password to history
                     try { await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [newUser.id, hashedPassword]); } catch (_) {}
+                    
+                    // Create beta tracking record for early access users
+                    if (early_access) {
+                        try {
+                            await pool.query(
+                                'INSERT INTO beta_tracking (user_id, email, started_at) VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING',
+                                [newUser.id, normalizedEmail, earlyAccessStartTime]
+                            );
+                        } catch (err) {
+                            console.error('Error creating beta tracking record:', err);
+                        }
+                    }
+                    
+                    // Generate 6-digit verification code
+                    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                    
+                    try {
+                        // Store verification code with normalized email - use PostgreSQL NOW() to avoid timezone issues
+                        const insertResult = await pool.query(
+                            `INSERT INTO email_verification_codes (email, code, expires_at, ip_address) 
+                             VALUES ($1, $2, NOW() + INTERVAL '15 minutes', $3) 
+                             RETURNING expires_at`,
+                            [normalizedEmail, verificationCode, clientIp]
+                        );
+                        
+                        logger.info(`Verification code ${verificationCode} generated and stored for ${normalizedEmail}, expires at ${insertResult.rows[0].expires_at}`);
+                        
+                        // Send verification email
+                        const transport = createTransport();
+                        const mail = buildVerificationCodeEmail({ to: normalizedEmail, code: verificationCode });
+                        await transport.sendMail(mail);
+                        
+                        logger.info(`Verification email sent successfully to ${normalizedEmail}`);
+                    } catch (emailError) {
+                        console.error('Error with verification code/email:', emailError);
+                        logger.error('Verification error details:', emailError);
+                        
+                        // Check if table exists
+                        if (emailError.message && emailError.message.includes('email_verification_codes')) {
+                            console.error('⚠️  email_verification_codes table does not exist. Please run migrations.');
+                        }
+                        // Don't fail registration if email fails - but log it
+                    }
+                    
                     return res.json({ 
                         success: true, 
-                        beta_user: beta_user,
-                        message: beta_user ? 'Welcome to the beta!' : 'Account created successfully',
-                        id: newUser.id,
-                        email: email,
-                        superuser: false,
-                        referral_code: final_referral_code
+                        requiresVerification: true,
+                        email: normalizedEmail,
+                        message: 'Verification code sent to your email'
                     })
                 }
             }
@@ -102,16 +180,19 @@ const register = async (req, res) => {
 
 const login = async (req, res) => {
     const { email, password } = req.body;
+    
+    // Normalize email to lowercase for case-insensitive comparison
+    const normalizedEmail = email.toLowerCase().trim();
 
     // Enforce the same complexity rule even on login to nudge updates (but do not block legacy)
     // Only warn if clearly too weak to avoid locking out existing users
     const complexity = validatePasswordComplexity(password);
     if (!complexity.valid && complexity.severity === 'weak') {
         // Proceed without blocking login
-        console.log('[Auth] Weak password used on login for', email);
+        console.log('[Auth] Weak password used on login for', normalizedEmail);
     }
 
-    pool.query('SELECT * FROM users WHERE email = $1', [email], async (error, result) => {
+    pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail], async (error, result) => {
         if(error){
             return res.status(400).json({ error: 'Failed to check if user exists' })
         } else if( result.rows.length === 0 ) {
@@ -125,9 +206,17 @@ const login = async (req, res) => {
         if(!isMatch){
             return res.status(400).json({ error: 'Invalid credentials' })
         }
+        
+        // Check if email is verified
+        if (!user.email_verified) {
+            return res.status(403).json({ 
+                error: 'Please verify your email before logging in',
+                requiresVerification: true,
+                email: user.email
+            })
+        }
 
         let token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { algorithm: 'HS256' })
-        console.log('Login successful, returning user:', user);
 
         // Get subscription status
         const { getSubscriptionStatus } = require('../utils/subscriptionHelpers');
@@ -144,6 +233,7 @@ const login = async (req, res) => {
             email: user.email,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
+            early_access: user.early_access || false,
             referral_code: user.referral_code,
             subscriptionStatus: subscriptionStatus
         })
@@ -171,8 +261,11 @@ const requestPasswordReset = async (req, res) => {
         const { email } = req.body;
         const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
         if (!email) return res.status(200).json({ success: true });
+        
+        // Normalize email to lowercase
+        const normalizedEmail = email.toLowerCase().trim();
 
-        const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+        const userResult = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
         if (userResult.rows.length === 0) {
             // Always respond the same
             return res.status(200).json({ success: true });
@@ -210,7 +303,7 @@ const requestPasswordReset = async (req, res) => {
 
         try {
             const transport = createTransport();
-            const mail = buildResetEmail({ to: email, resetUrl });
+            const mail = buildResetEmail({ to: normalizedEmail, resetUrl });
             await transport.sendMail(mail);
         } catch (err) {
             console.error('Failed to send reset email:', err.message);
@@ -330,7 +423,7 @@ const getUserSettings = async (req, res) => {
         const userId = req.user.id;
         
         const result = await pool.query(
-            `SELECT id, email, trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, referral_code,
+            `SELECT id, email, trade_confirmation, show_tooltips, email_alerts_enabled, superuser, beta_user, early_access, early_access_started_at, referral_code,
                     app_settings, account_defaults, cost_basis_data,
                     tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at,
                     EXISTS(SELECT 1 FROM api_credentials ac WHERE ac.user_id = $1) AS has_tradestation_credentials
@@ -448,6 +541,8 @@ const getUserSettings = async (req, res) => {
             emailAlertsEnabled: user.email_alerts_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
+            early_access: user.early_access || false,
+            early_access_started_at: user.early_access_started_at,
             referral_code: user.referral_code,
             hasTradeStationCredentials: user.has_tradestation_credentials === true,
             appSettings: user.app_settings || {},
@@ -536,6 +631,7 @@ const updateUserSettings = async (req, res) => {
             emailAlertsEnabled: user.email_alerts_enabled || false,
             superuser: user.superuser || false,
             beta_user: user.beta_user || false,
+            early_access: user.early_access || false,
             referral_code: user.referral_code,
             appSettings: user.app_settings || {},
             accountSettings: accountSettings, // Combined view with loss limits from locks
@@ -797,6 +893,227 @@ const setAccountLossLimitLockout = async (req, res) => {
     }
 };
 
+// Verify email with code
+const verifyEmail = async (req, res) => {
+    try {
+        const { email, code } = req.body;
+        
+        if (!email || !code) {
+            return res.status(400).json({ error: 'Email and code are required' });
+        }
+        
+        // Normalize email to lowercase for case-insensitive comparison
+        const normalizedEmail = email.toLowerCase().trim();
+        const trimmedCode = code.trim();
+        
+        logger.info(`Verifying email: ${normalizedEmail} with code: ${trimmedCode}`);
+        
+        // First, check if there are ANY codes for this email (case-insensitive)
+        const allCodesResult = await pool.query(
+            'SELECT id, code, verified, expires_at, attempts, created_at FROM email_verification_codes WHERE LOWER(email) = $1 ORDER BY created_at DESC',
+            [normalizedEmail]
+        );
+        
+        logger.info(`Found ${allCodesResult.rows.length} codes for ${normalizedEmail}`);
+        if (allCodesResult.rows.length > 0) {
+            const latestCode = allCodesResult.rows[0];
+            const now = new Date();
+            const expiresAt = new Date(latestCode.expires_at);
+            const isExpired = expiresAt < now;
+            logger.info(`Latest code details:`, {
+                code: latestCode.code,
+                codeMatch: latestCode.code === trimmedCode,
+                verified: latestCode.verified,
+                expires_at: latestCode.expires_at,
+                isExpired: isExpired,
+                attempts: latestCode.attempts,
+                created_at: latestCode.created_at
+            });
+        }
+        
+        // Find the most recent valid code for this email (case-insensitive email comparison)
+        const codeResult = await pool.query(
+            `SELECT * FROM email_verification_codes 
+             WHERE LOWER(email) = $1 AND code = $2 AND verified = FALSE AND expires_at > NOW()
+             ORDER BY created_at DESC 
+             LIMIT 1`,
+            [normalizedEmail, trimmedCode]
+        );
+        
+        if (codeResult.rows.length === 0) {
+            // Check if code exists but is expired or already verified (case-insensitive)
+            const expiredOrUsedResult = await pool.query(
+                'SELECT * FROM email_verification_codes WHERE LOWER(email) = $1 AND code = $2 ORDER BY created_at DESC LIMIT 1',
+                [normalizedEmail, trimmedCode]
+            );
+            
+            if (expiredOrUsedResult.rows.length > 0) {
+                const record = expiredOrUsedResult.rows[0];
+                if (record.verified) {
+                    return res.status(400).json({ error: 'This code has already been used' });
+                }
+                if (new Date(record.expires_at) < new Date()) {
+                    return res.status(400).json({ error: 'This code has expired. Please request a new one.' });
+                }
+            }
+            
+            // Increment attempts for any matching code (case-insensitive)
+            await pool.query(
+                'UPDATE email_verification_codes SET attempts = attempts + 1 WHERE LOWER(email) = $1 AND code = $2',
+                [normalizedEmail, trimmedCode]
+            );
+            
+            logger.warn(`Invalid verification attempt for ${normalizedEmail} with code ${trimmedCode}`);
+            return res.status(400).json({ error: 'Invalid verification code' });
+        }
+        
+        const verificationRecord = codeResult.rows[0];
+        
+        // Check attempts (max 5)
+        if (verificationRecord.attempts >= 5) {
+            return res.status(429).json({ error: 'Too many verification attempts. Please request a new code.' });
+        }
+        
+        // Mark code as verified
+        await pool.query(
+            'UPDATE email_verification_codes SET verified = TRUE, verified_at = NOW() WHERE id = $1',
+            [verificationRecord.id]
+        );
+        
+        // Mark user email as verified (case-insensitive)
+        const userResult = await pool.query(
+            'UPDATE users SET email_verified = TRUE, email_verified_at = NOW() WHERE LOWER(email) = $1 RETURNING *',
+            [normalizedEmail]
+        );
+        
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        logger.info(`Email verified successfully for ${normalizedEmail}`);
+        
+        return res.json({ 
+            success: true, 
+            message: 'Email verified successfully!',
+            email: normalizedEmail
+        });
+    } catch (error) {
+        logger.error('Error verifying email:', error);
+        return res.status(500).json({ error: 'Failed to verify email' });
+    }
+};
+
+// Resend verification code
+const resendVerificationCode = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+        
+        // Normalize email to lowercase for case-insensitive comparison
+        const normalizedEmail = email.toLowerCase().trim();
+        
+        // Check if user exists (case-insensitive)
+        const userResult = await pool.query('SELECT email_verified FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        if (userResult.rows[0].email_verified) {
+            return res.status(400).json({ error: 'Email already verified' });
+        }
+        
+        // Rate limiting: Check how many codes sent in last hour (case-insensitive)
+        const recentCodesResult = await pool.query(
+            'SELECT COUNT(*) as count FROM email_verification_codes WHERE LOWER(email) = $1 AND created_at > NOW() - INTERVAL \'1 hour\'',
+            [normalizedEmail]
+        );
+        
+        if (parseInt(recentCodesResult.rows[0].count) >= 5) {
+            return res.status(429).json({ error: 'Too many verification codes requested. Please try again in an hour.' });
+        }
+        
+        // Generate new 6-digit code
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Store verification code with normalized email - use PostgreSQL NOW() to avoid timezone issues
+        const insertResult = await pool.query(
+            `INSERT INTO email_verification_codes (email, code, expires_at, ip_address) 
+             VALUES ($1, $2, NOW() + INTERVAL '15 minutes', $3) 
+             RETURNING expires_at`,
+            [normalizedEmail, verificationCode, clientIp]
+        );
+        
+        logger.info(`Verification code ${verificationCode} generated for ${normalizedEmail}, expires at ${insertResult.rows[0].expires_at}`);
+        
+        // Send verification email
+        try {
+            const transport = createTransport();
+            const mail = buildVerificationCodeEmail({ to: normalizedEmail, code: verificationCode });
+            await transport.sendMail(mail);
+            
+            logger.info(`Verification code resent successfully to ${normalizedEmail}`);
+        } catch (emailError) {
+            console.error('Error sending verification email:', emailError);
+            return res.status(500).json({ error: 'Failed to send verification email' });
+        }
+        
+        return res.json({ 
+            success: true, 
+            message: 'Verification code sent to your email'
+        });
+    } catch (error) {
+        logger.error('Error resending verification code:', error);
+        return res.status(500).json({ error: 'Failed to resend verification code' });
+    }
+};
+
+// Update user early access status (superuser only)
+const updateEarlyAccessStatus = async (req, res) => {
+    try {
+        const requestingUserId = req.user.id;
+        const { userId, earlyAccess } = req.body;
+
+        if (!userId || earlyAccess === undefined) {
+            return res.status(400).json({ error: 'User ID and early access status are required' });
+        }
+
+        // Check if requesting user is superuser
+        const superuserCheck = await pool.query(
+            'SELECT superuser FROM users WHERE id = $1',
+            [requestingUserId]
+        );
+
+        if (superuserCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        if (!superuserCheck.rows[0].superuser) {
+            return res.status(403).json({ error: 'Only superusers can update early access status' });
+        }
+
+        // Update the target user's early access status
+        const timestamp = earlyAccess ? new Date() : null;
+        await pool.query(
+            'UPDATE users SET early_access = $1, early_access_started_at = $2 WHERE id = $3',
+            [earlyAccess, timestamp, userId]
+        );
+
+        logger.info(`Superuser ${requestingUserId} updated early access for user ${userId} to ${earlyAccess}`);
+        
+        res.json({ 
+            success: true, 
+            message: `Early access ${earlyAccess ? 'granted' : 'revoked'} successfully` 
+        });
+    } catch (error) {
+        logger.error('Error updating early access status:', error);
+        res.status(500).json({ error: 'Failed to update early access status' });
+    }
+};
+
 module.exports = {
     register,
     login,
@@ -811,5 +1128,8 @@ module.exports = {
     getMaintenanceMode,
     updateMaintenanceMode,
     requestPasswordReset,
-    resetPassword
+    resetPassword,
+    updateEarlyAccessStatus,
+    verifyEmail,
+    resendVerificationCode
 };

@@ -82,7 +82,7 @@ function buildResetEmail({ to, resetUrl }) {
 function buildContactNotificationEmail({ email, subject, message, userId, isBetaRequest }) {
   // Admin email - defaults to support@precisiontrader.tech, can be overridden with ADMIN_EMAIL env var
   const adminEmail = process.env.ADMIN_EMAIL || 'support@precisiontrader.tech';
-  const from = process.env.EMAIL_FROM || 'noreply@precisiontrader.tech';
+  const from = process.env.EMAIL_FROM || 'support@precisiontrader.tech';
   const emailSubject = isBetaRequest ? '🚀 New Beta Access Request' : `New Contact Form: ${subject}`;
   
   const betaBadge = isBetaRequest ? '<span style="display:inline-block;background:#3b82f6;color:#fff;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-left:8px">BETA REQUEST</span>' : '';
@@ -247,7 +247,7 @@ The PrecisionTrader Team
 
 function buildBugReportNotificationEmail({ email, subject, description, userId, stateSnapshot, reportId }) {
   const adminEmail = process.env.ADMIN_EMAIL || 'support@precisiontrader.tech';
-  const from = process.env.EMAIL_FROM || 'noreply@precisiontrader.tech';
+  const from = process.env.EMAIL_FROM || 'support@precisiontrader.tech';
   const emailSubject = `🐛 Bug Report: ${subject}`;
   const adminUrl = 'https://precisiontrader.tech';
   const reportUrl = `${adminUrl}/admin/bug-reports/${reportId}`;
@@ -829,6 +829,52 @@ Questions? Just reply to this email.
   return { from, to, subject: emailSubject, text, html };
 }
 
+/**
+ * Build email verification code email
+ */
+function buildVerificationCodeEmail({ to, code }) {
+  const from = process.env.EMAIL_FROM || 'support@precisiontrader.tech';
+  const emailSubject = 'Verify your email - PrecisionTrader';
+  
+  const text = `
+Welcome to PrecisionTrader!
+
+Please verify your email address by entering this code:
+
+${code}
+
+This code will expire in 15 minutes.
+
+If you didn't create an account, you can safely ignore this email.
+
+Best regards,
+The PrecisionTrader Team
+  `.trim();
+
+  const html = `
+  <div style="background:#111827;padding:32px;margin:0;width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3">
+    <div style="max-width:560px;margin:0 auto;background:#151c2b;border-radius:12px;overflow:hidden">
+      <div style="padding:20px 24px;border-bottom:1px solid #1f2937">
+        <div style="font-weight:600;color:#e6edf3;font-size:18px">PrecisionTrader</div>
+      </div>
+      <div style="padding:24px">
+        <h2 style="margin:0 0 8px 0;color:#e6edf3;font-size:20px">Verify your email</h2>
+        <p style="margin:0 0 20px 0;color:#c7d2fe;line-height:1.5">Welcome to PrecisionTrader! Please enter this verification code to complete your registration:</p>
+        
+        <div style="background:linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%);border:2px solid rgba(139, 92, 246, 0.3);border-radius:12px;padding:24px;text-align:center;margin:20px 0">
+          <div style="color:#9ca3af;font-size:13px;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">Your Verification Code</div>
+          <div style="color:#8B5CF6;font-size:42px;font-weight:700;letter-spacing:8px;font-family:monospace">${code}</div>
+        </div>
+        
+        <p style="margin:16px 0 0 0;color:#9ca3af;font-size:13px;text-align:center">This code expires in <strong style="color:#c7d2fe">15 minutes</strong></p>
+        <p style="margin:8px 0 0 0;color:#9ca3af;font-size:12px;text-align:center">If you didn't create an account, you can safely ignore this email.</p>
+      </div>
+    </div>
+  </div>`;
+
+  return { from, to, subject: emailSubject, text, html };
+}
+
 module.exports = { 
   createTransport, 
   buildResetEmail, 
@@ -838,7 +884,8 @@ module.exports = {
   buildBugReportConfirmationEmail,
   buildPriceAlertEmail,
   buildPositionLossEmail,
-  buildBetaWelcomeEmail
+  buildBetaWelcomeEmail,
+  buildVerificationCodeEmail
 };
 
 

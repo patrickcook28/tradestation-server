@@ -25,15 +25,15 @@ async function getActiveSubscription(userId) {
 
 /**
  * Check if user has active subscription or is in trial
- * Beta users with valid referral codes bypass subscription requirements
+ * Early access users and beta users with valid referral codes bypass subscription requirements
  * @param {number} userId - User ID
  * @returns {boolean} True if user has access
  */
 async function hasActiveSubscription(userId) {
   try {
-    // Check if user is a beta user with valid referral code
+    // Check if user has early access, beta access, or is superuser
     const userResult = await pool.query(
-      'SELECT superuser, beta_user, referral_code FROM users WHERE id = $1',
+      'SELECT superuser, beta_user, early_access, referral_code FROM users WHERE id = $1',
       [userId]
     );
 
@@ -48,7 +48,12 @@ async function hasActiveSubscription(userId) {
       return true;
     }
 
-    // Beta users with valid referral codes have free access
+    // Early access users have free access (new system)
+    if (user.early_access) {
+      return true;
+    }
+
+    // Beta users with valid referral codes have free access (legacy system)
     if (user.beta_user && user.referral_code) {
       // Verify referral code is still valid
       const referralResult = await pool.query(
@@ -134,7 +139,7 @@ async function getSubscriptionStatus(userId) {
   try {
     // Get user info
     const userResult = await pool.query(
-      'SELECT superuser, beta_user, referral_code FROM users WHERE id = $1',
+      'SELECT superuser, beta_user, early_access, referral_code FROM users WHERE id = $1',
       [userId]
     );
 
@@ -161,7 +166,17 @@ async function getSubscriptionStatus(userId) {
       };
     }
 
-    // Beta user with valid referral code
+    // Early access user (new system)
+    if (user.early_access) {
+      return {
+        hasAccess: true,
+        reason: 'early_access',
+        subscription: null,
+        hasUsedTrial: hasUsedTrialBefore
+      };
+    }
+
+    // Beta user with valid referral code (legacy system)
     if (user.beta_user && user.referral_code) {
       const referralResult = await pool.query(
         'SELECT is_active FROM referral_codes WHERE code = $1',

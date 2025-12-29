@@ -173,6 +173,8 @@ app.get('/debug/test-tradestation', authenticateToken, asyncHandler(routes.debug
 
 // Auth routes
 app.post("/auth/register", asyncHandler(routes.authRoutes.register));
+app.post("/auth/verify_email", asyncHandler(routes.authRoutes.verifyEmail));
+app.post("/auth/resend_verification", asyncHandler(routes.authRoutes.resendVerificationCode));
 app.post("/auth/login", asyncHandler(routes.authRoutes.login));
 app.get("/auth/settings", authenticateToken, asyncHandler(routes.authRoutes.getUserSettings));
 app.put("/auth/settings", authenticateToken, asyncHandler(routes.authRoutes.updateUserSettings));
@@ -181,6 +183,7 @@ app.get("/auth/cost_basis", authenticateToken, asyncHandler(routes.authRoutes.ge
 app.put("/auth/cost_basis", authenticateToken, asyncHandler(routes.authRoutes.updateCostBasisData));
 app.get("/auth/maintenance", asyncHandler(routes.authRoutes.getMaintenanceMode));
 app.put("/auth/maintenance", authenticateToken, asyncHandler(routes.authRoutes.updateMaintenanceMode));
+app.put("/auth/early_access", authenticateToken, asyncHandler(routes.authRoutes.updateEarlyAccessStatus));
 // Password reset routes (underscore style)
 app.post('/auth/request_password_reset', routes.authRoutes.requestPasswordReset);
 app.post('/auth/reset_password', routes.authRoutes.resetPassword);
