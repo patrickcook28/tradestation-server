@@ -12,6 +12,7 @@ const contactRoutes = require('./contact');
 const bugReportsRoutes = require('./bugReports');
 const debugRoutes = require('./debug');
 const learnRoutes = require('./learn');
+const emailTemplatesRoutes = require('./emailTemplates');
 
 module.exports = {
     authRoutes,
@@ -27,5 +28,6 @@ module.exports = {
     contactRoutes,
     bugReportsRoutes,
     debugRoutes,
-    learnRoutes
+    learnRoutes,
+    emailTemplatesRoutes
 };

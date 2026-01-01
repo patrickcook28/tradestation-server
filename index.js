@@ -253,6 +253,9 @@ app.use('/contact', authenticateToken, routes.contactRoutes);
 // Bug reports routes
 app.use('/bug-reports', authenticateToken, routes.bugReportsRoutes);
 
+// Email templates routes (superuser only, checked in router)
+app.use('/email-templates', authenticateToken, routes.emailTemplatesRoutes);
+
 // Watchlists routes (all require auth within router)
 app.use('/', routes.watchlistsRouter);
 

@@ -830,6 +830,113 @@ Questions? Just reply to this email.
 }
 
 /**
+ * Build early access welcome email (less wordy than beta email)
+ */
+function buildEarlyAccessWelcomeEmail({ to }) {
+  const from = process.env.EMAIL_FROM || 'support@precisiontrader.tech';
+  const frontendUrl = 'https://precisiontrader.tech';
+  const emailSubject = 'Welcome to PrecisionTrader - Early Access';
+  
+  const text = `
+Welcome to PrecisionTrader!
+
+Your account is set up and ready to go. You now have early access to all features.
+
+Get started:
+• Link your TradeStation account on the Trade page
+• Start placing bracket orders with our drag-and-drop interface
+• Set up position sizing and daily loss limits
+
+Need help? Just reply to this email.
+
+Happy trading!
+
+— The PrecisionTrader Team
+  `.trim();
+
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+  </head>
+  <body style="margin:0;padding:0;background-color:#111827;color:#e6edf3;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#111827;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#151c2b;border-radius:12px;overflow:hidden;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #1f2937;background-color:#151c2b;">
+                <div style="font-weight:600;color:#e6edf3;font-size:18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">PrecisionTrader</div>
+              </td>
+            </tr>
+            <!-- Content -->
+            <tr>
+              <td style="padding:24px;background-color:#151c2b;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td style="padding-bottom:20px;">
+                      <h2 style="margin:0 0 12px 0;color:#e6edf3;font-size:22px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Welcome to PrecisionTrader!</h2>
+                      <p style="margin:0;color:#c7d2fe;font-size:15px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Your account is set up and ready to go. You now have early access to all features.
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- CTA Button -->
+                  <tr>
+                    <td align="center" style="padding-bottom:24px;">
+                      <a href="${frontendUrl}/trade" style="display:inline-block;background-color:#3b82f6;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:600;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Get Started</a>
+                    </td>
+                  </tr>
+
+                  <!-- Quick Start -->
+                  <tr>
+                    <td style="background-color:#1f2937;border-radius:8px;padding:16px;">
+                      <div style="color:#e6edf3;font-size:15px;font-weight:600;margin-bottom:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Quick Start</div>
+                      <ul style="margin:0;padding-left:20px;color:#cbd5e1;line-height:1.7;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        <li>Link your TradeStation account on the Trade page</li>
+                        <li>Start placing bracket orders with drag-and-drop</li>
+                        <li>Set up position sizing and daily loss limits</li>
+                      </ul>
+                    </td>
+                  </tr>
+
+                  <!-- Closing -->
+                  <tr>
+                    <td style="padding-top:24px;border-top:1px solid #374151;">
+                      <p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                        Happy trading!
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="padding:16px 24px;background-color:#1f2937;text-align:center;">
+                <p style="margin:0;color:#9ca3af;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                  Questions? Just reply to this email.<br>
+                  — The PrecisionTrader Team
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+
+  return { from, to, subject: emailSubject, text, html };
+}
+
+/**
  * Build email verification code email
  */
 function buildVerificationCodeEmail({ to, code }) {
@@ -885,6 +992,7 @@ module.exports = {
   buildPriceAlertEmail,
   buildPositionLossEmail,
   buildBetaWelcomeEmail,
+  buildEarlyAccessWelcomeEmail,
   buildVerificationCodeEmail
 };
 

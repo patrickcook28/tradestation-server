@@ -167,6 +167,36 @@ const handleOAuthCallback = async (req, res) => {
         const verifyResult = await pool.query('SELECT user_id FROM api_credentials WHERE user_id = $1', [req.user.id]);
         console.log('✅ Verification: Credentials exist in DB:', verifyResult.rows.length > 0);
         
+        // Track successful TradeStation connection in analytics
+        try {
+          const db = require('../db');
+          await db.query(`
+            INSERT INTO analytics_events 
+            (event_type, user_id, session_id, event_data, user_agent, referrer, screen_resolution, viewport_size, ip_address, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `, [
+            'tradestation_connected',
+            req.user.id,
+            `session_${Date.now()}`,
+            JSON.stringify({
+              user_id: req.user.id,
+              connected_at: new Date().toISOString(),
+              token_type: json_response['token_type'],
+              expires_in: json_response['expires_in'],
+              scope: json_response['scope']
+            }),
+            req.headers['user-agent'],
+            req.headers['referer'],
+            null,
+            null,
+            req.ip || req.connection.remoteAddress,
+            new Date().toISOString()
+          ]);
+        } catch (analyticsError) {
+          // Don't fail connection if analytics fails
+          console.error('Failed to track TradeStation connection event:', analyticsError.message);
+        }
+        
         const redirectUrl = `${process.env.FRONTEND_URL}/trade`;
         console.log('🔄 Redirecting to:', redirectUrl);
         console.log('=== OAuth Callback Complete ===');

@@ -342,6 +342,8 @@ router.get('/session-activities', async (req, res) => {
     }
 
     // Get session activities with user info and UTM source
+    // Check registration_source and source fields in both top-level and parameters nested structure
+    // Priority: parameters.registration_source > parameters.source > top-level registration_source > top-level source > utm_params
     const activitiesQuery = `
       SELECT 
         ae.id,
@@ -353,9 +355,33 @@ router.get('/session-activities', async (req, res) => {
         ae.ip_address,
         ae.created_at,
         u.email,
-        ae.event_data->'utm_params'->>'utm_source' as utm_source,
-        ae.event_data->'utm_params'->>'utm_medium' as utm_medium,
-        ae.event_data->'utm_params'->>'utm_campaign' as utm_campaign
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source'
+        ) as utm_source,
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'utm_medium',
+          ae.event_data->'parameters'->'source'->>'utm_medium',
+          ae.event_data->'registration_source'->>'utm_medium',
+          ae.event_data->'source'->>'utm_medium',
+          ae.event_data->'utm_params'->>'utm_medium'
+        ) as utm_medium,
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'utm_campaign',
+          ae.event_data->'parameters'->'source'->>'utm_campaign',
+          ae.event_data->'registration_source'->>'utm_campaign',
+          ae.event_data->'source'->>'utm_campaign',
+          ae.event_data->'utm_params'->>'utm_campaign'
+        ) as utm_campaign,
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
+        ) as custom_source
       FROM analytics_events ae
       LEFT JOIN users u ON ae.user_id = u.id
       ${whereClause}

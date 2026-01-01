@@ -6,8 +6,11 @@ const { createTransport, buildResetEmail, buildVerificationCodeEmail } = require
 const logger = require("../config/logging");
 
 const register = async (req, res) => {
-    const { email, password, password_confirm, referral_code } = req.body;
+    const { email, password, password_confirm, referral_code, registration_source } = req.body;
     const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+    
+    // Log registration source for debugging
+    logger.info(`Registration attempt for ${email}, registration_source:`, registration_source);
     
     // Normalize email to lowercase
     const normalizedEmail = email.toLowerCase().trim();
@@ -105,9 +108,33 @@ const register = async (req, res) => {
         // Capture legal acceptance timestamp
         const acceptanceTimestamp = new Date();
 
+        // Prepare registration_source JSONB data
+        // Handle both object and string formats (in case it's already stringified)
+        let registrationSourceData = null;
+        if (registration_source) {
+            if (typeof registration_source === 'string') {
+                // Already a string, use as-is
+                try {
+                    JSON.parse(registration_source); // Validate it's valid JSON
+                    registrationSourceData = registration_source;
+                } catch (e) {
+                    logger.warn(`Invalid JSON string for registration_source: ${registration_source}`);
+                }
+            } else if (typeof registration_source === 'object' && Object.keys(registration_source).length > 0) {
+                // Object, stringify it
+                registrationSourceData = JSON.stringify(registration_source);
+            }
+        }
+        
+        logger.info(`Registration source for ${normalizedEmail}:`, {
+            raw: registration_source,
+            type: typeof registration_source,
+            stringified: registrationSourceData
+        });
+
         pool.query(
-            'INSERT INTO users (email, password, beta_user, referral_code, early_access, early_access_started_at, tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-            [normalizedEmail, hashedPassword, beta_user, final_referral_code, early_access, earlyAccessStartTime, acceptanceTimestamp, acceptanceTimestamp, acceptanceTimestamp], 
+            'INSERT INTO users (email, password, beta_user, referral_code, early_access, early_access_started_at, tos_accepted_at, privacy_policy_accepted_at, risk_disclosure_accepted_at, registration_source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+            [normalizedEmail, hashedPassword, beta_user, final_referral_code, early_access, earlyAccessStartTime, acceptanceTimestamp, acceptanceTimestamp, acceptanceTimestamp, registrationSourceData], 
             async (error, result) => {
                 if(error) {
                     console.error('Database error during user creation:', error);
@@ -179,7 +206,7 @@ const register = async (req, res) => {
 };
 
 const login = async (req, res) => {
-    const { email, password } = req.body;
+    const { email, password, login_source } = req.body;
     
     // Normalize email to lowercase for case-insensitive comparison
     const normalizedEmail = email.toLowerCase().trim();
@@ -225,6 +252,20 @@ const login = async (req, res) => {
             subscriptionStatus = await getSubscriptionStatus(user.id);
         } catch (err) {
             console.error('Error fetching subscription status in login:', err);
+        }
+
+        // Update registration_source if login_source is provided and user doesn't have one yet
+        // This handles cases where user registered before source tracking was implemented
+        if (login_source && Object.keys(login_source).length > 0 && !user.registration_source) {
+            try {
+                await pool.query(
+                    'UPDATE users SET registration_source = $1 WHERE id = $2',
+                    [JSON.stringify(login_source), user.id]
+                );
+            } catch (err) {
+                // Don't fail login if source update fails
+                console.error('Error updating registration_source on login:', err);
+            }
         }
 
         return res.json({
@@ -990,7 +1031,27 @@ const verifyEmail = async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
+        const user = userResult.rows[0];
         logger.info(`Email verified successfully for ${normalizedEmail}`);
+        
+        // Send early access welcome email if user has early access
+        // Only send if this is a new account setup (email just verified)
+        if (user.early_access) {
+            try {
+                const { createTransport } = require('../config/email');
+                const { buildEmailFromTemplate } = require('../config/emailTemplates');
+                
+                const transport = createTransport();
+                const mailOptions = buildEmailFromTemplate('early_access_onboarding', {
+                    to: normalizedEmail
+                });
+                await transport.sendMail(mailOptions);
+                logger.info(`Early access welcome email sent to ${normalizedEmail} using template: early_access_onboarding`);
+            } catch (emailError) {
+                // Don't fail the verification if email fails
+                logger.error('Failed to send early access welcome email:', emailError);
+            }
+        }
         
         return res.json({ 
             success: true, 
