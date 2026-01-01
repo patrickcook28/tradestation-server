@@ -628,13 +628,25 @@ class PositionLossEngine {
     const alertKey = `${userId}|${accountId}|${paperTrading ? 1 : 0}|${positionId}`;
     
     try {
+      // Validate that we have required position data
+      const symbol = positionData.Symbol;
+      const quantity = positionData.Quantity;
+      const avgPrice = positionData.AveragePrice;
+      
+      if (!symbol) {
+        logger.warn(`[PositionLossEngine] Missing Symbol in positionData for account ${accountId}. PositionData keys: ${Object.keys(positionData).join(', ')}`);
+      }
+      if (avgPrice === undefined || avgPrice === null || avgPrice === 0) {
+        logger.warn(`[PositionLossEngine] Missing or zero AveragePrice in positionData for ${symbol || 'unknown'} (account ${accountId}). AveragePrice: ${avgPrice}`);
+      }
+      
       // Create position snapshot (only essential fields to minimize memory)
       const positionSnapshot = {
-        Symbol: positionData.Symbol,
-        Quantity: positionData.Quantity,
-        AveragePrice: positionData.AveragePrice,
-        UnrealizedPL: positionData.UnrealizedProfitLoss || positionData.UnrealizedPL || positionData.UnrealizedPnL,
-        PositionID: positionData.PositionID
+        Symbol: symbol || null,
+        Quantity: quantity || 0,
+        AveragePrice: avgPrice || 0,
+        UnrealizedPL: positionData.UnrealizedProfitLoss || positionData.UnrealizedPL || positionData.UnrealizedPnL || 0,
+        PositionID: positionData.PositionID || null
       };
       
       // Insert alert into database

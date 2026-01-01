@@ -2,22 +2,32 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('./auth');
+const { requireSuperuser } = require('../middleware/superuserCheck');
 const logger = require('../config/logging');
 
 /**
  * Get all early access / beta users with their tracking data (admin only)
  */
-router.get('/tracking', authenticateToken, async (req, res) => {
+router.get('/tracking', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
+    // Get all users with early_access or beta_user, including those without beta_tracking records
     const result = await pool.query(`
       SELECT 
-        bt.*,
+        COALESCE(bt.id, u.id) as id,
+        COALESCE(bt.email, u.email) as email,
+        u.id as user_id,
+        bt.contact_submission_id,
+        bt.beta_code,
+        bt.requested_at,
+        bt.started_at,
+        bt.intro_email_sent_at,
+        bt.followup_email_sent_at,
+        bt.survey_sent_at,
+        bt.survey_completed_at,
+        bt.survey_response,
+        bt.notes,
+        bt.created_at,
         u.beta_user,
         u.early_access,
         u.early_access_started_at,
@@ -25,17 +35,17 @@ router.get('/tracking', authenticateToken, async (req, res) => {
         cs.subject as request_subject,
         cs.message as request_message,
         cs.status as submission_status
-      FROM beta_tracking bt
-      LEFT JOIN users u ON bt.user_id = u.id
+      FROM users u
+      LEFT JOIN beta_tracking bt ON bt.user_id = u.id
       LEFT JOIN contact_submissions cs ON bt.contact_submission_id = cs.id
       WHERE u.early_access = TRUE OR u.beta_user = TRUE
       ORDER BY 
         COALESCE(u.early_access_started_at, bt.started_at) DESC NULLS LAST, 
         bt.requested_at DESC NULLS LAST, 
-        bt.created_at DESC
+        COALESCE(bt.created_at, u.id) DESC
     `);
 
-    res.json({ success: true, betaUsers: result.rows });
+    res.json({ success: true, earlyAccessUsers: result.rows });
   } catch (error) {
     logger.error('Error fetching beta tracking data:', error);
     res.status(500).json({ error: 'Failed to fetch beta tracking data' });
@@ -45,13 +55,8 @@ router.get('/tracking', authenticateToken, async (req, res) => {
 /**
  * Get a single beta user's tracking data (admin only)
  */
-router.get('/tracking/:id', authenticateToken, async (req, res) => {
+router.get('/tracking/:id', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const { id } = req.params;
 
@@ -86,13 +91,8 @@ router.get('/tracking/:id', authenticateToken, async (req, res) => {
 /**
  * Create or update beta tracking record (admin only)
  */
-router.post('/tracking', authenticateToken, async (req, res) => {
+router.post('/tracking', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const {
       email,
@@ -149,13 +149,8 @@ router.post('/tracking', authenticateToken, async (req, res) => {
 /**
  * Update specific beta tracking fields (admin only)
  */
-router.patch('/tracking/:id', authenticateToken, async (req, res) => {
+router.patch('/tracking/:id', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const { id } = req.params;
     const updates = req.body;
@@ -195,13 +190,8 @@ router.patch('/tracking/:id', authenticateToken, async (req, res) => {
 /**
  * Send follow-up email to beta user (admin only)
  */
-router.post('/tracking/:id/send-followup', authenticateToken, async (req, res) => {
+router.post('/tracking/:id/send-followup', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const { id } = req.params;
 
@@ -235,13 +225,8 @@ router.post('/tracking/:id/send-followup', authenticateToken, async (req, res) =
 /**
  * Send survey to beta user (admin only)
  */
-router.post('/tracking/:id/send-survey', authenticateToken, async (req, res) => {
+router.post('/tracking/:id/send-survey', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const { id } = req.params;
 
@@ -275,13 +260,8 @@ router.post('/tracking/:id/send-survey', authenticateToken, async (req, res) => 
 /**
  * Get beta users that need follow-up emails (15 days after start)
  */
-router.get('/tracking/pending-followups', authenticateToken, async (req, res) => {
+router.get('/tracking/pending-followups', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const result = await pool.query(`
       SELECT *
@@ -302,13 +282,8 @@ router.get('/tracking/pending-followups', authenticateToken, async (req, res) =>
 /**
  * Get beta users that need surveys (30 days after start)
  */
-router.get('/tracking/pending-surveys', authenticateToken, async (req, res) => {
+router.get('/tracking/pending-surveys', authenticateToken, requireSuperuser, async (req, res) => {
   try {
-    // Verify superuser
-    const userResult = await pool.query('SELECT superuser FROM users WHERE id = $1', [req.user.id]);
-    if (!userResult.rows[0]?.superuser) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     const result = await pool.query(`
       SELECT *

@@ -437,16 +437,29 @@ router.get('/alerts/pending', authenticateToken, async (req, res) => {
       [req.user.id]
     );
     
-    const pendingAlerts = result.rows.map(row => ({
-      id: row.id,
-      accountId: row.account_id,
-      alertType: row.alert_type,
-      thresholdAmount: parseFloat(row.threshold_amount),
-      lossAmount: parseFloat(row.loss_amount),
-      positionSnapshot: row.position_snapshot,
-      detectedAt: row.detected_at,
-      lockoutExpiresAt: row.lockout_expires_at
-    }));
+    const pendingAlerts = result.rows.map(row => {
+      // Ensure positionSnapshot is parsed correctly (handle case where it might be a string)
+      let positionSnapshot = row.position_snapshot;
+      if (typeof positionSnapshot === 'string') {
+        try {
+          positionSnapshot = JSON.parse(positionSnapshot);
+        } catch (e) {
+          console.error('[LossLimits] Failed to parse position_snapshot:', e);
+          positionSnapshot = null;
+        }
+      }
+      
+      return {
+        id: row.id,
+        accountId: row.account_id,
+        alertType: row.alert_type,
+        thresholdAmount: parseFloat(row.threshold_amount),
+        lossAmount: parseFloat(row.loss_amount),
+        positionSnapshot: positionSnapshot,
+        detectedAt: row.detected_at,
+        lockoutExpiresAt: row.lockout_expires_at
+      };
+    });
     
     res.json({ success: true, pendingAlerts });
   } catch (err) {
@@ -488,19 +501,32 @@ router.get('/alerts', authenticateToken, async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    const alerts = result.rows.map(row => ({
-      id: row.id,
-      accountId: row.account_id,
-      alertType: row.alert_type,
-      thresholdAmount: parseFloat(row.threshold_amount),
-      lossAmount: parseFloat(row.loss_amount),
-      positionSnapshot: row.position_snapshot,
-      detectedAt: row.detected_at,
-      lockoutExpiresAt: row.lockout_expires_at,
-      acknowledgedAt: row.acknowledged_at,
-      userAction: row.user_action,
-      archivedAt: row.archived_at
-    }));
+    const alerts = result.rows.map(row => {
+      // Ensure positionSnapshot is parsed correctly (handle case where it might be a string)
+      let positionSnapshot = row.position_snapshot;
+      if (typeof positionSnapshot === 'string') {
+        try {
+          positionSnapshot = JSON.parse(positionSnapshot);
+        } catch (e) {
+          console.error('[LossLimits] Failed to parse position_snapshot:', e);
+          positionSnapshot = null;
+        }
+      }
+      
+      return {
+        id: row.id,
+        accountId: row.account_id,
+        alertType: row.alert_type,
+        thresholdAmount: parseFloat(row.threshold_amount),
+        lossAmount: parseFloat(row.loss_amount),
+        positionSnapshot: positionSnapshot,
+        detectedAt: row.detected_at,
+        lockoutExpiresAt: row.lockout_expires_at,
+        acknowledgedAt: row.acknowledged_at,
+        userAction: row.user_action,
+        archivedAt: row.archived_at
+      };
+    });
     
     res.json({ success: true, alerts });
   } catch (err) {
@@ -655,6 +681,17 @@ router.post('/alerts/test', authenticateToken, async (req, res) => {
     
     const alert = insertResult.rows[0];
     
+    // Ensure positionSnapshot is parsed correctly (handle case where it might be a string)
+    let parsedPositionSnapshot = alert.position_snapshot;
+    if (typeof parsedPositionSnapshot === 'string') {
+      try {
+        parsedPositionSnapshot = JSON.parse(parsedPositionSnapshot);
+      } catch (e) {
+        console.error('[LossLimits] Failed to parse position_snapshot:', e);
+        parsedPositionSnapshot = null;
+      }
+    }
+    
     // Send Pusher notification
     const pusherClient = getPusher();
     if (pusherClient) {
@@ -668,7 +705,7 @@ router.post('/alerts/test', authenticateToken, async (req, res) => {
           thresholdAmount: parseFloat(alert.threshold_amount),
           lossAmount: parseFloat(alert.loss_amount),
           lockoutExpiresAt: alert.lockout_expires_at,
-          positionSnapshot: alert.position_snapshot
+          positionSnapshot: parsedPositionSnapshot
         });
         console.log(`[LossLimits] Sent test alert via Pusher to user ${req.user.id}`);
       } catch (pusherErr) {
@@ -684,7 +721,7 @@ router.post('/alerts/test', authenticateToken, async (req, res) => {
         alertType: alert.alert_type,
         thresholdAmount: parseFloat(alert.threshold_amount),
         lossAmount: parseFloat(alert.loss_amount),
-        positionSnapshot: alert.position_snapshot,
+        positionSnapshot: parsedPositionSnapshot,
         detectedAt: alert.detected_at,
         lockoutExpiresAt: alert.lockout_expires_at
       },
@@ -760,20 +797,33 @@ router.get('/admin/alerts', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      alerts: result.rows.map(row => ({
-        id: row.id,
-        userId: row.user_id,
-        userEmail: row.email,
-        accountId: row.account_id,
-        alertType: row.alert_type,
-        thresholdAmount: parseFloat(row.threshold_amount),
-        lossAmount: parseFloat(row.loss_amount),
-        positionSnapshot: row.position_snapshot,
-        detectedAt: row.detected_at,
-        lockoutExpiresAt: row.lockout_expires_at,
-        acknowledgedAt: row.acknowledged_at,
-        userAction: row.user_action
-      })),
+      alerts: result.rows.map(row => {
+        // Ensure positionSnapshot is parsed correctly (handle case where it might be a string)
+        let positionSnapshot = row.position_snapshot;
+        if (typeof positionSnapshot === 'string') {
+          try {
+            positionSnapshot = JSON.parse(positionSnapshot);
+          } catch (e) {
+            console.error('[LossLimits] Failed to parse position_snapshot:', e);
+            positionSnapshot = null;
+          }
+        }
+        
+        return {
+          id: row.id,
+          userId: row.user_id,
+          userEmail: row.email,
+          accountId: row.account_id,
+          alertType: row.alert_type,
+          thresholdAmount: parseFloat(row.threshold_amount),
+          lossAmount: parseFloat(row.loss_amount),
+          positionSnapshot: positionSnapshot,
+          detectedAt: row.detected_at,
+          lockoutExpiresAt: row.lockout_expires_at,
+          acknowledgedAt: row.acknowledged_at,
+          userAction: row.user_action
+        };
+      }),
       pagination: {
         total,
         limit,

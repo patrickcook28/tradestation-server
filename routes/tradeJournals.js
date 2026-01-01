@@ -50,6 +50,19 @@ router.delete('/trade_journals/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper function to normalize options to string array format
+function normalizeOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options.map(opt => {
+    // If object, extract label or value as string
+    if (typeof opt === 'object' && opt !== null) {
+      return String(opt.label || opt.value || opt);
+    }
+    // If string, return as-is
+    return String(opt);
+  });
+}
+
 // Get current user's active journal template
 router.get('/trade_journal_template', authenticateToken, async (req, res) => {
   try {
@@ -77,10 +90,17 @@ router.put('/trade_journal_template', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid template payload' });
     }
     const templateName = name || 'Default';
-    // Normalize and persist position for each field
+    // Normalize and persist position for each field, and normalize options
     const normalized = {
       ...template,
-      fields: template.fields.map((f, i) => ({ ...f, position: typeof f.position === 'number' ? f.position : i }))
+      fields: template.fields.map((f, i) => {
+        const normalizedField = { ...f, position: typeof f.position === 'number' ? f.position : i };
+        // Normalize options for single and multi type fields
+        if ((f.type === 'single' || f.type === 'multi') && Array.isArray(f.options)) {
+          normalizedField.options = normalizeOptions(f.options);
+        }
+        return normalizedField;
+      })
     };
 
     // Try update latest, else insert
