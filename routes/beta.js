@@ -42,7 +42,7 @@ router.get('/tracking', authenticateToken, requireSuperuser, async (req, res) =>
       ORDER BY 
         COALESCE(u.early_access_started_at, bt.started_at) DESC NULLS LAST, 
         bt.requested_at DESC NULLS LAST, 
-        COALESCE(bt.created_at, u.id) DESC
+        COALESCE(bt.created_at, u.early_access_started_at) DESC NULLS LAST
     `);
 
     res.json({ success: true, earlyAccessUsers: result.rows });
