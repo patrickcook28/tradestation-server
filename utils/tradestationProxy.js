@@ -26,7 +26,6 @@ const buildUrl = (paperTrading, path, query) => {
 };
 
 const getUserAccessToken = async (userId) => {
-  logger.info(`Fetching access token for user ${userId}`);
   const credResult = await pool.query('SELECT access_token FROM api_credentials WHERE user_id = $1', [userId]);
   if (credResult.rows.length === 0) {
     logger.error(`No API credentials found for user ${userId}`);
@@ -37,7 +36,6 @@ const getUserAccessToken = async (userId) => {
     err.status = 404;
     throw err;
   }
-  logger.info(`Access token found for user ${userId}`);
   return decryptToken(credResult.rows[0].access_token);
 };
 
