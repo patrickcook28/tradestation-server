@@ -485,6 +485,12 @@ router.get('/time-series', async (req, res) => {
     const queryParams = [startDate];
     let paramCount = 1;
 
+    // Exclude test accounts if requested
+    const excludeTestAccounts = req.query.exclude_test_accounts === 'true';
+    if (excludeTestAccounts) {
+      whereClause += ` AND (ae.user_id IS NULL OR u.email NOT IN ('patrickcook28@icloud.com', 'pcookcollege@gmail.com'))`;
+    }
+
     if (event_type) {
       paramCount++;
       whereClause += ` AND event_type = $${paramCount}`;
@@ -523,38 +529,76 @@ router.get('/time-series', async (req, res) => {
     }
 
     // Get time-series data grouped by event type
+    // Need to join with users table to filter by email
     const timeSeriesQuery = `
       SELECT 
         ${timeGroupExpr} as time_bucket,
-        event_type,
+        ae.event_type,
         COUNT(*) as count,
-        COUNT(DISTINCT session_id) as unique_sessions,
-        COUNT(DISTINCT user_id) as unique_users
-      FROM analytics_events
+        COUNT(DISTINCT ae.session_id) as unique_sessions,
+        COUNT(DISTINCT ae.user_id) as unique_users
+      FROM analytics_events ae
+      LEFT JOIN users u ON ae.user_id = u.id
       ${whereClause}
-      GROUP BY ${timeGroupExpr}, event_type
-      ORDER BY time_bucket ASC, event_type ASC
+      GROUP BY ${timeGroupExpr}, ae.event_type
+      ORDER BY time_bucket ASC, ae.event_type ASC
     `;
     
     const timeSeriesResult = await db.query(timeSeriesQuery, queryParams);
 
-    // Transform to chart-friendly format
-    // Group by event type and create series
-    const seriesMap = {};
+    // Generate all time buckets in the range
+    const allTimeBuckets = [];
+    const bucketSize = granularity === 'day' ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000; // 1 day or 1 hour in milliseconds
+    let currentTime = new Date(startDate);
+    currentTime.setMinutes(0, 0, 0); // Round to start of hour
+    if (granularity === 'day') {
+      currentTime.setHours(0, 0, 0, 0); // Round to start of day
+    }
+    
+    while (currentTime <= now) {
+      allTimeBuckets.push(new Date(currentTime));
+      currentTime = new Date(currentTime.getTime() + bucketSize);
+    }
+
+    // Create a map of existing data: time_bucket -> event_type -> data
+    const dataMap = new Map();
     timeSeriesResult.rows.forEach(row => {
-      const eventType = row.event_type;
-      if (!seriesMap[eventType]) {
-        seriesMap[eventType] = [];
+      const bucketTime = new Date(row.time_bucket).getTime();
+      if (!dataMap.has(bucketTime)) {
+        dataMap.set(bucketTime, new Map());
       }
-      
-      // Convert timestamp to Unix seconds
-      const timestamp = new Date(row.time_bucket).getTime() / 1000;
-      
-      seriesMap[eventType].push({
-        time: timestamp,
-        value: parseInt(row.count),
+      dataMap.get(bucketTime).set(row.event_type, {
+        count: parseInt(row.count),
         unique_sessions: parseInt(row.unique_sessions),
         unique_users: parseInt(row.unique_users),
+      });
+    });
+
+    // Get all unique event types from the data
+    const eventTypes = new Set();
+    timeSeriesResult.rows.forEach(row => {
+      eventTypes.add(row.event_type);
+    });
+
+    // Transform to chart-friendly format, filling in missing time buckets with 0
+    const seriesMap = {};
+    eventTypes.forEach(eventType => {
+      seriesMap[eventType] = [];
+      
+      allTimeBuckets.forEach(bucket => {
+        const bucketTime = bucket.getTime();
+        const bucketData = dataMap.get(bucketTime);
+        const eventData = bucketData?.get(eventType);
+        
+        // Convert timestamp to Unix seconds
+        const timestamp = bucketTime / 1000;
+        
+        seriesMap[eventType].push({
+          time: timestamp,
+          value: eventData ? eventData.count : 0,
+          unique_sessions: eventData ? eventData.unique_sessions : 0,
+          unique_users: eventData ? eventData.unique_users : 0,
+        });
       });
     });
 
@@ -656,14 +700,20 @@ router.get('/filters', async (req, res) => {
     }
 
     // Build WHERE clause for filtering
-    let whereClause = 'WHERE created_at >= $1';
+    let whereClause = 'WHERE ae.created_at >= $1';
     const queryParams = [startDate];
     let paramCount = 1;
+
+    // Exclude test accounts if requested
+    const excludeTestAccounts = req.query.exclude_test_accounts === 'true';
+    if (excludeTestAccounts) {
+      whereClause += ` AND (ae.user_id IS NULL OR u.email NOT IN ('patrickcook28@icloud.com', 'pcookcollege@gmail.com'))`;
+    }
 
     // If event_type filter is provided, only show sources that have this event type
     if (event_type) {
       paramCount++;
-      whereClause += ` AND event_type = $${paramCount}`;
+      whereClause += ` AND ae.event_type = $${paramCount}`;
       queryParams.push(event_type);
     }
 
@@ -672,15 +722,15 @@ router.get('/filters', async (req, res) => {
       paramCount++;
       whereClause += ` AND (
         COALESCE(
-          event_data->'parameters'->'registration_source'->>'utm_source',
-          event_data->'parameters'->'source'->>'utm_source',
-          event_data->'registration_source'->>'utm_source',
-          event_data->'source'->>'utm_source',
-          event_data->'utm_params'->>'utm_source',
-          event_data->'parameters'->'registration_source'->>'source',
-          event_data->'parameters'->'source'->>'source',
-          event_data->'registration_source'->>'source',
-          event_data->'source'->>'source'
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
         ) = $${paramCount}
       )`;
       queryParams.push(source);
