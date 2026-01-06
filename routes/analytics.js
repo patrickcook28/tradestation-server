@@ -431,6 +431,469 @@ router.get('/session-activities', async (req, res) => {
   }
 });
 
+/**
+ * Get time-series analytics data for charts
+ * Returns hourly aggregations of events over time
+ */
+router.get('/time-series', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check if user is admin/superuser
+    const userQuery = 'SELECT superuser FROM users WHERE id = $1';
+    const userResult = await db.query(userQuery, [decoded.id]);
+    
+    if (!userResult.rows[0]?.superuser) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { 
+      period = '7d', 
+      event_type, 
+      source, // UTM source or custom source
+      granularity = 'hour' // 'hour' or 'day'
+    } = req.query;
+    
+    // Calculate date range
+    const now = new Date();
+    let startDate;
+    switch (period) {
+      case '1d':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Build WHERE clause
+    let whereClause = 'WHERE created_at >= $1';
+    const queryParams = [startDate];
+    let paramCount = 1;
+
+    if (event_type) {
+      paramCount++;
+      whereClause += ` AND event_type = $${paramCount}`;
+      queryParams.push(event_type);
+    }
+
+    // Filter by source (UTM source or custom source)
+    if (source) {
+      paramCount++;
+      whereClause += ` AND (
+        COALESCE(
+          event_data->'parameters'->'registration_source'->>'utm_source',
+          event_data->'parameters'->'source'->>'utm_source',
+          event_data->'registration_source'->>'utm_source',
+          event_data->'source'->>'utm_source',
+          event_data->'utm_params'->>'utm_source',
+          event_data->'parameters'->'registration_source'->>'source',
+          event_data->'parameters'->'source'->>'source',
+          event_data->'registration_source'->>'source',
+          event_data->'source'->>'source'
+        ) = $${paramCount}
+      )`;
+      queryParams.push(source);
+    }
+
+    // Determine time grouping based on granularity
+    let timeGroupExpr;
+    let timeFormat;
+    if (granularity === 'day') {
+      timeGroupExpr = "DATE_TRUNC('day', created_at)";
+      timeFormat = "TO_CHAR(DATE_TRUNC('day', created_at), 'YYYY-MM-DD')";
+    } else {
+      // Default to hour
+      timeGroupExpr = "DATE_TRUNC('hour', created_at)";
+      timeFormat = "TO_CHAR(DATE_TRUNC('hour', created_at), 'YYYY-MM-DD HH24:MI:SS')";
+    }
+
+    // Get time-series data grouped by event type
+    const timeSeriesQuery = `
+      SELECT 
+        ${timeGroupExpr} as time_bucket,
+        event_type,
+        COUNT(*) as count,
+        COUNT(DISTINCT session_id) as unique_sessions,
+        COUNT(DISTINCT user_id) as unique_users
+      FROM analytics_events
+      ${whereClause}
+      GROUP BY ${timeGroupExpr}, event_type
+      ORDER BY time_bucket ASC, event_type ASC
+    `;
+    
+    const timeSeriesResult = await db.query(timeSeriesQuery, queryParams);
+
+    // Transform to chart-friendly format
+    // Group by event type and create series
+    const seriesMap = {};
+    timeSeriesResult.rows.forEach(row => {
+      const eventType = row.event_type;
+      if (!seriesMap[eventType]) {
+        seriesMap[eventType] = [];
+      }
+      
+      // Convert timestamp to Unix seconds
+      const timestamp = new Date(row.time_bucket).getTime() / 1000;
+      
+      seriesMap[eventType].push({
+        time: timestamp,
+        value: parseInt(row.count),
+        unique_sessions: parseInt(row.unique_sessions),
+        unique_users: parseInt(row.unique_users),
+      });
+    });
+
+    // Get unique sources for filtering
+    const sourcesQuery = `
+      SELECT DISTINCT
+        COALESCE(
+          event_data->'parameters'->'registration_source'->>'utm_source',
+          event_data->'parameters'->'source'->>'utm_source',
+          event_data->'registration_source'->>'utm_source',
+          event_data->'source'->>'utm_source',
+          event_data->'utm_params'->>'utm_source',
+          event_data->'parameters'->'registration_source'->>'source',
+          event_data->'parameters'->'source'->>'source',
+          event_data->'registration_source'->>'source',
+          event_data->'source'->>'source'
+        ) as source
+      FROM analytics_events
+      WHERE created_at >= $1
+        AND (
+          event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
+          event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
+          event_data->'registration_source'->>'utm_source' IS NOT NULL OR
+          event_data->'source'->>'utm_source' IS NOT NULL OR
+          event_data->'utm_params'->>'utm_source' IS NOT NULL OR
+          event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
+          event_data->'parameters'->'source'->>'source' IS NOT NULL OR
+          event_data->'registration_source'->>'source' IS NOT NULL OR
+          event_data->'source'->>'source' IS NOT NULL
+        )
+      ORDER BY source
+    `;
+    
+    const sourcesResult = await db.query(sourcesQuery, [startDate]);
+
+    res.json({
+      period,
+      granularity,
+      dateRange: {
+        start: startDate.toISOString(),
+        end: now.toISOString()
+      },
+      series: seriesMap,
+      availableSources: sourcesResult.rows.map(r => r.source).filter(Boolean),
+    });
+
+  } catch (error) {
+    console.error('Time-series analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch time-series analytics' });
+  }
+});
+
+/**
+ * Get available filter values (event types and sources)
+ * Respects optional filters to show only relevant values
+ */
+router.get('/filters', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check if user is admin/superuser
+    const userQuery = 'SELECT superuser FROM users WHERE id = $1';
+    const userResult = await db.query(userQuery, [decoded.id]);
+    
+    if (!userResult.rows[0]?.superuser) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { 
+      period = '7d',
+      event_type, // Optional: if provided, only show sources for this event type
+      source // Optional: if provided, only show event types for this source
+    } = req.query;
+    
+    // Calculate date range
+    const now = new Date();
+    let startDate;
+    switch (period) {
+      case '1d':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Build WHERE clause for filtering
+    let whereClause = 'WHERE created_at >= $1';
+    const queryParams = [startDate];
+    let paramCount = 1;
+
+    // If event_type filter is provided, only show sources that have this event type
+    if (event_type) {
+      paramCount++;
+      whereClause += ` AND event_type = $${paramCount}`;
+      queryParams.push(event_type);
+    }
+
+    // If source filter is provided, only show event types that have this source
+    if (source) {
+      paramCount++;
+      whereClause += ` AND (
+        COALESCE(
+          event_data->'parameters'->'registration_source'->>'utm_source',
+          event_data->'parameters'->'source'->>'utm_source',
+          event_data->'registration_source'->>'utm_source',
+          event_data->'source'->>'utm_source',
+          event_data->'utm_params'->>'utm_source',
+          event_data->'parameters'->'registration_source'->>'source',
+          event_data->'parameters'->'source'->>'source',
+          event_data->'registration_source'->>'source',
+          event_data->'source'->>'source'
+        ) = $${paramCount}
+      )`;
+      queryParams.push(source);
+    }
+
+    // Get unique event types with counts (respecting source filter if provided)
+    const eventTypesQuery = `
+      SELECT 
+        event_type,
+        COUNT(*) as count
+      FROM analytics_events
+      ${whereClause}
+      GROUP BY event_type
+      ORDER BY count DESC, event_type ASC
+    `;
+    const eventTypesResult = await db.query(eventTypesQuery, queryParams);
+
+    // Get unique sources with counts (respecting event_type filter if provided)
+    // Reset whereClause for sources query (remove event_type filter, keep source filter if it exists)
+    let sourcesWhereClause = 'WHERE created_at >= $1';
+    const sourcesQueryParams = [startDate];
+    let sourcesParamCount = 1;
+
+    if (event_type) {
+      sourcesParamCount++;
+      sourcesWhereClause += ` AND event_type = $${sourcesParamCount}`;
+      sourcesQueryParams.push(event_type);
+    }
+
+    const sourcesQuery = `
+      SELECT 
+        COALESCE(
+          event_data->'parameters'->'registration_source'->>'utm_source',
+          event_data->'parameters'->'source'->>'utm_source',
+          event_data->'registration_source'->>'utm_source',
+          event_data->'source'->>'utm_source',
+          event_data->'utm_params'->>'utm_source',
+          event_data->'parameters'->'registration_source'->>'source',
+          event_data->'parameters'->'source'->>'source',
+          event_data->'registration_source'->>'source',
+          event_data->'source'->>'source'
+        ) as source,
+        COUNT(*) as count
+      FROM analytics_events
+      ${sourcesWhereClause}
+        AND (
+          event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
+          event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
+          event_data->'registration_source'->>'utm_source' IS NOT NULL OR
+          event_data->'source'->>'utm_source' IS NOT NULL OR
+          event_data->'utm_params'->>'utm_source' IS NOT NULL OR
+          event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
+          event_data->'parameters'->'source'->>'source' IS NOT NULL OR
+          event_data->'registration_source'->>'source' IS NOT NULL OR
+          event_data->'source'->>'source' IS NOT NULL
+        )
+      GROUP BY source
+      ORDER BY count DESC, source ASC
+    `;
+    const sourcesResult = await db.query(sourcesQuery, sourcesQueryParams);
+
+    res.json({
+      period,
+      filters: {
+        event_type: event_type || null,
+        source: source || null,
+      },
+      eventTypes: eventTypesResult.rows.map(row => ({
+        event_type: row.event_type,
+        count: parseInt(row.count)
+      })),
+      sources: sourcesResult.rows
+        .filter(row => {
+          // Filter out null, undefined, and empty string values
+          const source = row.source;
+          return source && typeof source === 'string' && source.trim() !== '';
+        })
+        .map(row => ({
+          source: row.source.trim(),
+          count: parseInt(row.count)
+        }))
+    });
+
+  } catch (error) {
+    console.error('Analytics filters error:', error);
+    res.status(500).json({ error: 'Failed to fetch filter values' });
+  }
+});
+
+/**
+ * Get analytics summary metrics
+ */
+router.get('/summary', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check if user is admin/superuser
+    const userQuery = 'SELECT superuser FROM users WHERE id = $1';
+    const userResult = await db.query(userQuery, [decoded.id]);
+    
+    if (!userResult.rows[0]?.superuser) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { period = '7d' } = req.query;
+    
+    // Calculate date range
+    const now = new Date();
+    let startDate;
+    switch (period) {
+      case '1d':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Get total page views
+    const pageViewsQuery = `
+      SELECT COUNT(*) as count
+      FROM analytics_events
+      WHERE event_type = 'page_view' AND created_at >= $1
+    `;
+    const pageViewsResult = await db.query(pageViewsQuery, [startDate]);
+
+    // Get logged-in unique users (users with user_id)
+    const loggedInUsersQuery = `
+      SELECT COUNT(DISTINCT user_id) as count
+      FROM analytics_events
+      WHERE user_id IS NOT NULL AND created_at >= $1
+    `;
+    const loggedInUsersResult = await db.query(loggedInUsersQuery, [startDate]);
+
+    // Get anonymous unique sessions (sessions without user_id)
+    const anonymousSessionsQuery = `
+      SELECT COUNT(DISTINCT session_id) as count
+      FROM analytics_events
+      WHERE user_id IS NULL AND created_at >= $1
+    `;
+    const anonymousSessionsResult = await db.query(anonymousSessionsQuery, [startDate]);
+
+    // Get total unique sessions (all sessions, both logged-in and anonymous)
+    const totalSessionsQuery = `
+      SELECT COUNT(DISTINCT session_id) as count
+      FROM analytics_events
+      WHERE created_at >= $1
+    `;
+    const totalSessionsResult = await db.query(totalSessionsQuery, [startDate]);
+
+    // Get logged-in user sessions (sessions that belong to logged-in users)
+    const loggedInSessionsQuery = `
+      SELECT COUNT(DISTINCT session_id) as count
+      FROM analytics_events
+      WHERE user_id IS NOT NULL AND created_at >= $1
+    `;
+    const loggedInSessionsResult = await db.query(loggedInSessionsQuery, [startDate]);
+
+    // Get early access users count
+    const earlyAccessQuery = `
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE early_access = TRUE OR beta_user = TRUE
+    `;
+    const earlyAccessResult = await db.query(earlyAccessQuery);
+
+    // Get trial started count
+    const trialStartedQuery = `
+      SELECT COUNT(DISTINCT user_id) as count
+      FROM analytics_events
+      WHERE event_type = 'trial_started' AND created_at >= $1
+    `;
+    const trialStartedResult = await db.query(trialStartedQuery, [startDate]);
+
+    // Get order placed count
+    const orderPlacedQuery = `
+      SELECT COUNT(*) as count
+      FROM analytics_events
+      WHERE event_type = 'order_placed' AND created_at >= $1
+    `;
+    const orderPlacedResult = await db.query(orderPlacedQuery, [startDate]);
+
+    res.json({
+      period,
+      metrics: {
+        pageViews: parseInt(pageViewsResult.rows[0]?.count || 0),
+        loggedInUsers: parseInt(loggedInUsersResult.rows[0]?.count || 0),
+        anonymousSessions: parseInt(anonymousSessionsResult.rows[0]?.count || 0),
+        totalSessions: parseInt(totalSessionsResult.rows[0]?.count || 0),
+        loggedInSessions: parseInt(loggedInSessionsResult.rows[0]?.count || 0),
+        earlyAccessUsers: parseInt(earlyAccessResult.rows[0]?.count || 0),
+        trialsStarted: parseInt(trialStartedResult.rows[0]?.count || 0),
+        ordersPlaced: parseInt(orderPlacedResult.rows[0]?.count || 0),
+      }
+    });
+
+  } catch (error) {
+    console.error('Analytics summary error:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics summary' });
+  }
+});
+
 // DELETE /events/user/:userId - Delete all analytics events for a specific user (superuser only)
 router.delete('/events/user/:userId', async (req, res) => {
   try {
