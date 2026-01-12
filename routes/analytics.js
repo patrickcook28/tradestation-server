@@ -737,55 +737,66 @@ router.get('/filters', async (req, res) => {
     }
 
     // Get unique event types with counts (respecting source filter if provided)
+    // Add JOIN if we need to exclude test accounts
+    const eventTypesJoin = excludeTestAccounts ? 'LEFT JOIN users u ON ae.user_id = u.id' : '';
     const eventTypesQuery = `
       SELECT 
-        event_type,
+        ae.event_type,
         COUNT(*) as count
-      FROM analytics_events
+      FROM analytics_events ae
+      ${eventTypesJoin}
       ${whereClause}
-      GROUP BY event_type
-      ORDER BY count DESC, event_type ASC
+      GROUP BY ae.event_type
+      ORDER BY count DESC, ae.event_type ASC
     `;
     const eventTypesResult = await db.query(eventTypesQuery, queryParams);
 
     // Get unique sources with counts (respecting event_type filter if provided)
     // Reset whereClause for sources query (remove event_type filter, keep source filter if it exists)
-    let sourcesWhereClause = 'WHERE created_at >= $1';
+    let sourcesWhereClause = 'WHERE ae.created_at >= $1';
     const sourcesQueryParams = [startDate];
     let sourcesParamCount = 1;
 
+    // Add exclude test accounts if needed
+    if (excludeTestAccounts) {
+      sourcesWhereClause += ` AND (ae.user_id IS NULL OR u.email NOT IN ('patrickcook28@icloud.com', 'pcookcollege@gmail.com'))`;
+    }
+
     if (event_type) {
       sourcesParamCount++;
-      sourcesWhereClause += ` AND event_type = $${sourcesParamCount}`;
+      sourcesWhereClause += ` AND ae.event_type = $${sourcesParamCount}`;
       sourcesQueryParams.push(event_type);
     }
 
+    // Add JOIN if we need to exclude test accounts
+    const sourcesJoin = excludeTestAccounts ? 'LEFT JOIN users u ON ae.user_id = u.id' : '';
     const sourcesQuery = `
       SELECT 
         COALESCE(
-          event_data->'parameters'->'registration_source'->>'utm_source',
-          event_data->'parameters'->'source'->>'utm_source',
-          event_data->'registration_source'->>'utm_source',
-          event_data->'source'->>'utm_source',
-          event_data->'utm_params'->>'utm_source',
-          event_data->'parameters'->'registration_source'->>'source',
-          event_data->'parameters'->'source'->>'source',
-          event_data->'registration_source'->>'source',
-          event_data->'source'->>'source'
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
         ) as source,
         COUNT(*) as count
-      FROM analytics_events
+      FROM analytics_events ae
+      ${sourcesJoin}
       ${sourcesWhereClause}
         AND (
-          event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
-          event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
-          event_data->'registration_source'->>'utm_source' IS NOT NULL OR
-          event_data->'source'->>'utm_source' IS NOT NULL OR
-          event_data->'utm_params'->>'utm_source' IS NOT NULL OR
-          event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
-          event_data->'parameters'->'source'->>'source' IS NOT NULL OR
-          event_data->'registration_source'->>'source' IS NOT NULL OR
-          event_data->'source'->>'source' IS NOT NULL
+          ae.event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'registration_source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'utm_params'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
+          ae.event_data->'parameters'->'source'->>'source' IS NOT NULL OR
+          ae.event_data->'registration_source'->>'source' IS NOT NULL OR
+          ae.event_data->'source'->>'source' IS NOT NULL
         )
       GROUP BY source
       ORDER BY count DESC, source ASC
