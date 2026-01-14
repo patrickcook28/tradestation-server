@@ -547,23 +547,61 @@ router.get('/time-series', async (req, res) => {
     const timeSeriesResult = await db.query(timeSeriesQuery, queryParams);
 
     // Generate all time buckets in the range
+    // Use UTC consistently to match PostgreSQL DATE_TRUNC results
     const allTimeBuckets = [];
     const bucketSize = granularity === 'day' ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000; // 1 day or 1 hour in milliseconds
     let currentTime = new Date(startDate);
-    currentTime.setMinutes(0, 0, 0); // Round to start of hour
+    
+    // Round to start of hour/day in UTC to match PostgreSQL DATE_TRUNC
     if (granularity === 'day') {
-      currentTime.setHours(0, 0, 0, 0); // Round to start of day
+      // Set to start of day in UTC
+      currentTime = new Date(Date.UTC(
+        currentTime.getUTCFullYear(),
+        currentTime.getUTCMonth(),
+        currentTime.getUTCDate(),
+        0, 0, 0, 0
+      ));
+    } else {
+      // Set to start of hour in UTC
+      currentTime = new Date(Date.UTC(
+        currentTime.getUTCFullYear(),
+        currentTime.getUTCMonth(),
+        currentTime.getUTCDate(),
+        currentTime.getUTCHours(),
+        0, 0, 0
+      ));
     }
     
-    while (currentTime <= now) {
+    const endTime = new Date(now);
+    while (currentTime <= endTime) {
       allTimeBuckets.push(new Date(currentTime));
       currentTime = new Date(currentTime.getTime() + bucketSize);
     }
 
     // Create a map of existing data: time_bucket -> event_type -> data
+    // Normalize database timestamps to UTC start of day/hour for matching
     const dataMap = new Map();
     timeSeriesResult.rows.forEach(row => {
-      const bucketTime = new Date(row.time_bucket).getTime();
+      const dbTime = new Date(row.time_bucket);
+      // Normalize to UTC start of day/hour to match our bucket generation
+      let normalizedTime;
+      if (granularity === 'day') {
+        normalizedTime = new Date(Date.UTC(
+          dbTime.getUTCFullYear(),
+          dbTime.getUTCMonth(),
+          dbTime.getUTCDate(),
+          0, 0, 0, 0
+        ));
+      } else {
+        normalizedTime = new Date(Date.UTC(
+          dbTime.getUTCFullYear(),
+          dbTime.getUTCMonth(),
+          dbTime.getUTCDate(),
+          dbTime.getUTCHours(),
+          0, 0, 0
+        ));
+      }
+      const bucketTime = normalizedTime.getTime();
       if (!dataMap.has(bucketTime)) {
         dataMap.set(bucketTime, new Map());
       }

@@ -10,6 +10,7 @@ const Pusher = require("pusher");
 const backgroundStreamManager = require('./utils/backgroundStreamManager');
 const alertEngine = require('./workers/alertEngine');
 const positionLossEngine = require('./workers/positionLossEngine');
+const AccountSnapshotScheduler = require('./workers/accountSnapshotScheduler');
 const logger = require('./config/logging');
 const { authenticateToken, optionalAuthenticateToken } = require('./routes/auth');
 const { setupStripeWebhook } = require('./utils/stripeWebhookHandler');
@@ -270,6 +271,19 @@ app.use('/analytics', analyticsRoutes);
 const lossLimitsRoutes = require('./routes/lossLimits');
 app.use('/loss_limits', lossLimitsRoutes);
 
+// Session lockouts routes (trading time window restrictions)
+const sessionLockoutsRoutes = require('./routes/sessionLockouts');
+app.use('/session_lockouts', sessionLockoutsRoutes);
+
+// Account snapshots routes (daily balance tracking)
+const accountSnapshotsRoutes = require('./routes/accountSnapshots');
+const { requireSuperuser } = require('./middleware/superuserCheck');
+app.post('/account_snapshots/capture', authenticateToken, asyncHandler(accountSnapshotsRoutes.captureAccountSnapshot));
+app.get('/account_snapshots', authenticateToken, asyncHandler(accountSnapshotsRoutes.getAccountSnapshots));
+app.get('/account_snapshots/latest', authenticateToken, asyncHandler(accountSnapshotsRoutes.getLatestAccountSnapshots));
+// Superuser admin endpoint
+app.get('/admin/account_snapshots/overview', authenticateToken, requireSuperuser, asyncHandler(accountSnapshotsRoutes.getAdminSnapshotOverview));
+
 // Indicators proxy route (pass-through Alpha Vantage) and admin cache info
 app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
 app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));
@@ -306,6 +320,9 @@ app.use((err, req, res, _next) => {
 
 const PORT = process.env.PORT || 3001;
 
+// Initialize account snapshot scheduler (runs daily at 15:30 ET)
+const accountSnapshotScheduler = new AccountSnapshotScheduler();
+
 const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`Server started on port ${PORT}`);
   
@@ -319,6 +336,14 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     } catch (err) {
       console.error('Background services failed to start:', err.message);
     }
+  }
+  
+  // Start account snapshot scheduler (runs daily at 15:30 ET)
+  try {
+    await accountSnapshotScheduler.start();
+    console.log('Account snapshot scheduler started');
+  } catch (err) {
+    console.error('Account snapshot scheduler failed to start:', err.message);
   }
 });
 
