@@ -41,8 +41,33 @@ node tests/test_std_dev_alert.js
 node tests/test_sms.js
 ```
 
+### `test_stream_multiplexer_comprehensive.js`
+**Purpose**: Comprehensive testing of StreamMultiplexer cleanup, memory leak prevention, and multi-user scenarios
+**What it tests**:
+- ✅ **Memory leak prevention**: Reference nullification (abortController, readable, webStream, upstream)
+- ✅ **Abort controller cleanup**: Proper abort signal handling and nullification
+- ✅ **Stream reader closure**: Readable stream destruction and listener removal
+- ✅ **Timer cleanup**: Activity check intervals and initial data timeouts cleared
+- ✅ **Multiple users isolation**: Separate upstreams per user, proper cleanup
+- ✅ **Fast refresh / rapid reconnection**: Handling rapid account switches without leaks
+- ✅ **Stream recycle**: Same key reused after cleanup without memory accumulation
+- ✅ **Zombie stream detection**: 0-subscriber streams detected and cleaned up
+- ✅ **Rate limiting**: MAX_PENDING_OPENS enforcement
+- ✅ **Stale pending open cleanup**: Stuck pending opens removed after threshold
+- ✅ **Exclusive subscriber switching**: Account changes properly close old streams
+- ✅ **Periodic cleanup**: Stale connection removal
+- ✅ **Concurrent cleanup prevention**: Race condition protection via pendingCleanups
+- ✅ **Request abort detection**: Early abort detection before stream creation
+
+**How to run**:
+```bash
+node tests/test_stream_multiplexer_comprehensive.js
+```
+
+**Note**: This test focuses on cleanup logic and state management that can be verified without requiring full API integration. It tests the critical memory leak prevention mechanisms.
+
 ### `test_stream_multiplexer.js`
-**Purpose**: Comprehensive brute-force testing of the StreamMultiplexer
+**Purpose**: Integration testing of the StreamMultiplexer with real API calls
 **What it tests**:
 - Basic stream multiplexing (multiple subscribers to one upstream)
 - Rate limiting (MAX_PENDING_OPENS)
@@ -97,7 +122,8 @@ npm test
 node tests/test_timeframe_alerts.js
 node tests/test_std_dev_alert.js
 node tests/test_sms.js
-node tests/test_stream_multiplexer.js
+node tests/test_stream_multiplexer_comprehensive.js  # Memory leak & cleanup tests
+node tests/test_stream_multiplexer.js                 # Full integration tests (requires auth)
 node tests/test_concurrent_streams.js <JWT_TOKEN>
 ```
 

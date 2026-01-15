@@ -8,6 +8,8 @@
   },
   "scripts": {
     "test": "node tests/run_tests.js",
+    "test:streams": "node tests/test_stream_multiplexer_comprehensive.js",
+    "prepare": "husky install || true",
     "start": "node --expose-gc index.js",
     "start:caddy": "PORT=5000 node --expose-gc index.js",
     "server": "nodemon --expose-gc index.js",
@@ -44,6 +46,7 @@
   },
   "devDependencies": {
     "abort-controller": "^3.0.0",
+    "husky": "^9.0.11",
     "node-pg-migrate": "^6.2.2",
     "nodemon": "^3.1.0"
   },

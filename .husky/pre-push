@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🧪 Running backend tests before push..."
+echo ""
+
+# Get the project root directory
+PROJECT_ROOT="$(cd "$(dirname -- "$0")/.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
+
+# Check if node is available
+if ! command -v node >/dev/null 2>&1; then
+  echo "❌ Error: node is not installed or not in PATH"
+  exit 1
+fi
+
+# Run comprehensive stream multiplexer tests
+echo "Running stream multiplexer comprehensive tests..."
+if node tests/test_stream_multiplexer_comprehensive.js; then
+  echo ""
+  echo "✅ All stream multiplexer tests passed! Proceeding with push..."
+  exit 0
+else
+  echo ""
+  echo "❌ Stream multiplexer tests failed! Push aborted."
+  echo ""
+  echo "Fix failing tests before pushing, or use --no-verify to skip this check:"
+  echo "  git push --no-verify"
+  exit 1
+fi
