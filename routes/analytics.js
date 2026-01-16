@@ -230,7 +230,6 @@ router.get('/dashboard', async (req, res) => {
       userJourney: journeyResult.rows,
       conversionFunnel: funnelResult.rows
     });
-
   } catch (error) {
     console.error('Analytics dashboard error:', error);
     res.status(500).json({ error: 'Failed to fetch analytics data' });
