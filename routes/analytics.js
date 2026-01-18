@@ -53,8 +53,7 @@ router.post('/track', async (req, res) => {
       referrer,
       screen_resolution,
       viewport_size,
-      ip_address: req.ip || req.connection.remoteAddress,
-      created_at: new Date().toISOString()
+      ip_address: req.ip || req.connection.remoteAddress
     };
 
     // Log the event type being stored for debugging (disabled for production)
@@ -65,10 +64,12 @@ router.post('/track', async (req, res) => {
     // });
 
     // Store in database
+    // Use NOW() for created_at to let PostgreSQL handle the timestamp correctly
+    // This ensures the timestamp is stored correctly regardless of server timezone
     const query = `
       INSERT INTO analytics_events 
       (event_type, user_id, session_id, event_data, user_agent, referrer, screen_resolution, viewport_size, ip_address, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
     `;
     
     const values = [
@@ -80,8 +81,7 @@ router.post('/track', async (req, res) => {
       analyticsRecord.referrer,
       analyticsRecord.screen_resolution,
       analyticsRecord.viewport_size,
-      analyticsRecord.ip_address,
-      analyticsRecord.created_at
+      analyticsRecord.ip_address
     ];
 
     await db.query(query, values);
@@ -314,30 +314,93 @@ router.get('/session-activities', async (req, res) => {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
-    const { limit = 100, offset = 0, event_type, user_id, user_type } = req.query;
+    const { 
+      limit = 100, 
+      offset = 0, 
+      event_type, 
+      user_id, 
+      user_type,
+      period, // Optional: '1d', '7d', '30d', '90d'
+      source // Optional: UTM source or custom source
+    } = req.query;
+    
+    // Calculate date range if period is provided
+    let startDate = null;
+    if (period) {
+      const now = new Date();
+      switch (period) {
+        case '1d':
+          startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          break;
+        case '7d':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '30d':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '90d':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+      }
+    }
+    
+    // Exclude test accounts if requested
+    const excludeTestAccounts = req.query.exclude_test_accounts === 'true';
     
     // Build query with optional filters
     let whereClause = 'WHERE 1=1';
     const queryParams = [];
     let paramCount = 0;
 
+    // Apply date range filter if period is provided
+    if (startDate) {
+      paramCount++;
+      whereClause += ` AND ae.created_at >= $${paramCount}`;
+      queryParams.push(startDate);
+    }
+
+    // Exclude test accounts
+    if (excludeTestAccounts) {
+      const testAccounts = ['patrickcook28@icloud.com', 'pcookcollege@gmail.com', 'avery.ward.123@gmail.com', 'jacobdpark75@gmail.com'];
+      whereClause += ` AND (ae.user_id IS NULL OR u.email NOT IN (${testAccounts.map(account => `'${account}'`).join(',')}))`;
+    }
+
     if (event_type) {
       paramCount++;
-      whereClause += ` AND event_type = $${paramCount}`;
+      whereClause += ` AND ae.event_type = $${paramCount}`;
       queryParams.push(event_type);
     }
 
     if (user_id) {
       paramCount++;
-      whereClause += ` AND user_id = $${paramCount}`;
+      whereClause += ` AND ae.user_id = $${paramCount}`;
       queryParams.push(user_id);
     }
 
     // Filter by user type: 'logged_in' or 'anonymous'
     if (user_type === 'logged_in') {
-      whereClause += ` AND user_id IS NOT NULL`;
+      whereClause += ` AND ae.user_id IS NOT NULL`;
     } else if (user_type === 'anonymous') {
-      whereClause += ` AND user_id IS NULL`;
+      whereClause += ` AND ae.user_id IS NULL`;
+    }
+    
+    // Filter by source (UTM source or custom source)
+    if (source) {
+      paramCount++;
+      whereClause += ` AND (
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
+        ) = $${paramCount}
+      )`;
+      queryParams.push(source);
     }
 
     // Get session activities with user info and UTM source
@@ -391,13 +454,16 @@ router.get('/session-activities', async (req, res) => {
     queryParams.push(parseInt(limit), parseInt(offset));
     const activitiesResult = await db.query(activitiesQuery, queryParams);
 
-    // Get total count for pagination
+    // Get total count for pagination (use same filters but without limit/offset)
     const countQuery = `
       SELECT COUNT(*) as total
       FROM analytics_events ae
+      LEFT JOIN users u ON ae.user_id = u.id
       ${whereClause}
     `;
-    const countResult = await db.query(countQuery, queryParams.slice(0, -2));
+    // Remove limit and offset from params for count query
+    const countQueryParams = queryParams.slice(0, -2);
+    const countResult = await db.query(countQuery, countQueryParams);
 
     // Get event type summary
     const summaryQuery = `
@@ -479,8 +545,8 @@ router.get('/time-series', async (req, res) => {
         startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
 
-    // Build WHERE clause
-    let whereClause = 'WHERE created_at >= $1';
+    // Build WHERE clause - use table alias 'ae' consistently
+    let whereClause = 'WHERE ae.created_at >= $1';
     const queryParams = [startDate];
     let paramCount = 1;
 
@@ -492,7 +558,7 @@ router.get('/time-series', async (req, res) => {
 
     if (event_type) {
       paramCount++;
-      whereClause += ` AND event_type = $${paramCount}`;
+      whereClause += ` AND ae.event_type = $${paramCount}`;
       queryParams.push(event_type);
     }
 
@@ -501,30 +567,31 @@ router.get('/time-series', async (req, res) => {
       paramCount++;
       whereClause += ` AND (
         COALESCE(
-          event_data->'parameters'->'registration_source'->>'utm_source',
-          event_data->'parameters'->'source'->>'utm_source',
-          event_data->'registration_source'->>'utm_source',
-          event_data->'source'->>'utm_source',
-          event_data->'utm_params'->>'utm_source',
-          event_data->'parameters'->'registration_source'->>'source',
-          event_data->'parameters'->'source'->>'source',
-          event_data->'registration_source'->>'source',
-          event_data->'source'->>'source'
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
         ) = $${paramCount}
       )`;
       queryParams.push(source);
     }
 
     // Determine time grouping based on granularity
+    // Use table alias 'ae' consistently
     let timeGroupExpr;
     let timeFormat;
     if (granularity === 'day') {
-      timeGroupExpr = "DATE_TRUNC('day', created_at)";
-      timeFormat = "TO_CHAR(DATE_TRUNC('day', created_at), 'YYYY-MM-DD')";
+      timeGroupExpr = "DATE_TRUNC('day', ae.created_at)";
+      timeFormat = "TO_CHAR(DATE_TRUNC('day', ae.created_at), 'YYYY-MM-DD')";
     } else {
       // Default to hour
-      timeGroupExpr = "DATE_TRUNC('hour', created_at)";
-      timeFormat = "TO_CHAR(DATE_TRUNC('hour', created_at), 'YYYY-MM-DD HH24:MI:SS')";
+      timeGroupExpr = "DATE_TRUNC('hour', ae.created_at)";
+      timeFormat = "TO_CHAR(DATE_TRUNC('hour', ae.created_at), 'YYYY-MM-DD HH24:MI:SS')";
     }
 
     // Get time-series data grouped by event type
@@ -571,7 +638,25 @@ router.get('/time-series', async (req, res) => {
       ));
     }
     
-    const endTime = new Date(now);
+    // Normalize endTime to match granularity (start of current hour/day in UTC)
+    let endTime = new Date(now);
+    if (granularity === 'day') {
+      endTime = new Date(Date.UTC(
+        endTime.getUTCFullYear(),
+        endTime.getUTCMonth(),
+        endTime.getUTCDate(),
+        0, 0, 0, 0
+      ));
+    } else {
+      endTime = new Date(Date.UTC(
+        endTime.getUTCFullYear(),
+        endTime.getUTCMonth(),
+        endTime.getUTCDate(),
+        endTime.getUTCHours(),
+        0, 0, 0
+      ));
+    }
+    
     while (currentTime <= endTime) {
       allTimeBuckets.push(new Date(currentTime));
       currentTime = new Date(currentTime.getTime() + bucketSize);
@@ -639,37 +724,75 @@ router.get('/time-series', async (req, res) => {
       });
     });
 
-    // Get unique sources for filtering
+    // Get unique sources for filtering - respect all filters
+    // Build sources query params to match main query filters
+    const sourcesQueryParams = [startDate];
+    let sourcesParamCount = 1;
+    let sourcesWhereClause = 'WHERE ae.created_at >= $1';
+    
+    // Apply same filters as main query
+    const sourcesJoin = excludeTestAccounts ? 'LEFT JOIN users u ON ae.user_id = u.id' : '';
+    
+    if (excludeTestAccounts) {
+      const testAccounts = ['patrickcook28@icloud.com', 'pcookcollege@gmail.com', 'avery.ward.123@gmail.com', 'jacobdpark75@gmail.com'];
+      sourcesWhereClause += ` AND (ae.user_id IS NULL OR u.email NOT IN (${testAccounts.map(account => `'${account}'`).join(',')}))`;
+    }
+    
+    if (event_type) {
+      sourcesParamCount++;
+      sourcesWhereClause += ` AND ae.event_type = $${sourcesParamCount}`;
+      sourcesQueryParams.push(event_type);
+    }
+    
+    if (source) {
+      sourcesParamCount++;
+      sourcesWhereClause += ` AND (
+        COALESCE(
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
+        ) = $${sourcesParamCount}
+      )`;
+      sourcesQueryParams.push(source);
+    }
+    
     const sourcesQuery = `
       SELECT DISTINCT
         COALESCE(
-          event_data->'parameters'->'registration_source'->>'utm_source',
-          event_data->'parameters'->'source'->>'utm_source',
-          event_data->'registration_source'->>'utm_source',
-          event_data->'source'->>'utm_source',
-          event_data->'utm_params'->>'utm_source',
-          event_data->'parameters'->'registration_source'->>'source',
-          event_data->'parameters'->'source'->>'source',
-          event_data->'registration_source'->>'source',
-          event_data->'source'->>'source'
+          ae.event_data->'parameters'->'registration_source'->>'utm_source',
+          ae.event_data->'parameters'->'source'->>'utm_source',
+          ae.event_data->'registration_source'->>'utm_source',
+          ae.event_data->'source'->>'utm_source',
+          ae.event_data->'utm_params'->>'utm_source',
+          ae.event_data->'parameters'->'registration_source'->>'source',
+          ae.event_data->'parameters'->'source'->>'source',
+          ae.event_data->'registration_source'->>'source',
+          ae.event_data->'source'->>'source'
         ) as source
-      FROM analytics_events
-      WHERE created_at >= $1
+      FROM analytics_events ae
+      ${sourcesJoin}
+      ${sourcesWhereClause}
         AND (
-          event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
-          event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
-          event_data->'registration_source'->>'utm_source' IS NOT NULL OR
-          event_data->'source'->>'utm_source' IS NOT NULL OR
-          event_data->'utm_params'->>'utm_source' IS NOT NULL OR
-          event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
-          event_data->'parameters'->'source'->>'source' IS NOT NULL OR
-          event_data->'registration_source'->>'source' IS NOT NULL OR
-          event_data->'source'->>'source' IS NOT NULL
+          ae.event_data->'parameters'->'registration_source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'parameters'->'source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'registration_source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'source'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'utm_params'->>'utm_source' IS NOT NULL OR
+          ae.event_data->'parameters'->'registration_source'->>'source' IS NOT NULL OR
+          ae.event_data->'parameters'->'source'->>'source' IS NOT NULL OR
+          ae.event_data->'registration_source'->>'source' IS NOT NULL OR
+          ae.event_data->'source'->>'source' IS NOT NULL
         )
       ORDER BY source
     `;
     
-    const sourcesResult = await db.query(sourcesQuery, [startDate]);
+    const sourcesResult = await db.query(sourcesQuery, sourcesQueryParams);
 
     res.json({
       period,
