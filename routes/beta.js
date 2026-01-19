@@ -12,6 +12,7 @@ router.get('/tracking', authenticateToken, requireSuperuser, async (req, res) =>
   try {
 
     // Get all users with early_access or beta_user, including those without beta_tracking records
+    // Also get the last session activity date from analytics_events
     const result = await pool.query(`
       SELECT 
         COALESCE(bt.id, u.id) as id,
@@ -34,7 +35,10 @@ router.get('/tracking', authenticateToken, requireSuperuser, async (req, res) =>
         u.referral_code as user_referral_code,
         cs.subject as request_subject,
         cs.message as request_message,
-        cs.status as submission_status
+        cs.status as submission_status,
+        (SELECT MAX(created_at) 
+         FROM analytics_events 
+         WHERE user_id = u.id) as last_activity_at
       FROM users u
       LEFT JOIN beta_tracking bt ON bt.user_id = u.id
       LEFT JOIN contact_submissions cs ON bt.contact_submission_id = cs.id
