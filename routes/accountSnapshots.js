@@ -369,6 +369,25 @@ async function getAdminSnapshotOverview(req, res) {
   const userId = req.user.id;
   
   try {
+    // Check if is_paper_trading column exists - if not, migration needs to be run
+    const columnCheckQuery = `
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_schema = 'public'
+        AND table_name = 'account_snapshots' 
+        AND column_name = 'is_paper_trading'
+    `;
+    const columnCheck = await pool.query(columnCheckQuery);
+    
+    if (columnCheck.rows.length === 0) {
+      logger.error('[Account Snapshot Admin] Missing is_paper_trading column - migration not run');
+      return res.status(500).json({
+        error: 'Database schema is out of date',
+        message: 'The is_paper_trading column does not exist. Please run migrations: npm run migrate',
+        details: 'Migration 1793000000000_add_is_paper_trading_to_account_snapshots.js needs to be applied'
+      });
+    }
+    
     // Get user's stats
     const statsQuery = `
       SELECT 
