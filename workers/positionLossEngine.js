@@ -100,9 +100,9 @@ class PositionLossEngine {
       await this.loadLossLimits();
       await this.loadMonitoredAccounts();
       
-      // Monitor memory usage of triggeredAlerts Map
-      const alertCount = this.triggeredAlerts.size;
-      const estimatedMemoryKB = Math.round((alertCount * 60) / 1024); // ~60 bytes per entry
+      // Monitor memory usage of triggeredAlertsCache Set
+      const alertCount = this.triggeredAlertsCache.size;
+      const estimatedMemoryKB = Math.round((alertCount * 40) / 1024); // ~40 bytes per entry (just keys)
       if (process.env.DEBUG_STREAMS === 'true' || alertCount > 1000) {
         logger.info(`[PositionLossEngine] 📊 Memory: ${alertCount} tracked alerts (~${estimatedMemoryKB} KB)`);
       }
