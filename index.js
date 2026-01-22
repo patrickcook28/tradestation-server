@@ -271,9 +271,9 @@ app.use('/analytics', analyticsRoutes);
 const lossLimitsRoutes = require('./routes/lossLimits');
 app.use('/loss_limits', lossLimitsRoutes);
 
-// Session lockouts routes (trading time window restrictions)
-const sessionLockoutsRoutes = require('./routes/sessionLockouts');
-app.use('/session_lockouts', sessionLockoutsRoutes);
+// Trading hours restrictions routes (trading time window restrictions)
+const tradingHoursRestrictionsRoutes = require('./routes/tradingHoursRestrictions');
+app.use('/trading_hours_restrictions', tradingHoursRestrictionsRoutes);
 
 // Account snapshots routes (daily balance tracking)
 const accountSnapshotsRoutes = require('./routes/accountSnapshots');

@@ -40,40 +40,40 @@ function isWithinTradingWindow(timeWindows) {
 }
 
 // ============================================================================
-// SESSION LOCKOUT CRUD
+// TRADING HOURS RESTRICTIONS CRUD
 // ============================================================================
 
 /**
- * GET /session_lockouts
- * Get all active session lockouts for the authenticated user
+ * GET /trading_hours_restrictions
+ * Get all active trading hours restrictions for the authenticated user
  */
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, account_id, time_windows, enabled_at, expires_at, created_at
-       FROM session_lockouts
+       FROM trading_hours_restrictions
        WHERE user_id = $1
        ORDER BY account_id`,
       [req.user.id]
     );
     
-    // Add isExpired flag to each lockout
+    // Add isExpired flag to each restriction
     const now = new Date();
-    const lockouts = result.rows.map(lockout => ({
-      ...lockout,
-      isExpired: new Date(lockout.expires_at) < now
+    const restrictions = result.rows.map(restriction => ({
+      ...restriction,
+      isExpired: new Date(restriction.expires_at) < now
     }));
     
-    res.json({ success: true, lockouts });
+    res.json({ success: true, restrictions });
   } catch (err) {
-    console.error('[SessionLockouts] Error fetching lockouts:', err);
-    res.status(500).json({ success: false, error: 'Failed to fetch session lockouts' });
+    console.error('[TradingHoursRestrictions] Error fetching restrictions:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch trading hours restrictions' });
   }
 });
 
 /**
- * POST /session_lockouts
- * Enable a session lockout for an account
+ * POST /trading_hours_restrictions
+ * Enable trading hours restrictions for an account
  * Body: { accountId, timeWindows: [{startTime, endTime}], expiresAt }
  */
 router.post('/', authenticateToken, async (req, res) => {
@@ -104,100 +104,100 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'expiresAt is required' });
     }
     
-    // Check if there's already an active lockout for this account
+    // Check if there's already an active restriction for this account
     const existing = await pool.query(
-      `SELECT id, expires_at FROM session_lockouts
+      `SELECT id, expires_at FROM trading_hours_restrictions
        WHERE user_id = $1 AND account_id = $2
        LIMIT 1`,
       [req.user.id, accountId]
     );
     
-    // If there's an existing lockout that hasn't expired, return error
+    // If there's an existing restriction that hasn't expired, return error
     if (existing.rows.length > 0) {
       const existingExpiresAt = existing.rows[0].expires_at;
       if (new Date(existingExpiresAt) > new Date()) {
         return res.status(409).json({
           success: false,
-          error: 'Session lockout already active for this account',
+          error: 'Trading hours restriction already active for this account',
           existingExpiresAt
         });
       }
       
       // If expired, delete it so we can create a new one
       await pool.query(
-        `DELETE FROM session_lockouts WHERE id = $1`,
+        `DELETE FROM trading_hours_restrictions WHERE id = $1`,
         [existing.rows[0].id]
       );
     }
     
-    // Create the new lockout
+    // Create the new restriction
     const result = await pool.query(
-      `INSERT INTO session_lockouts (user_id, account_id, time_windows, expires_at, enabled_at, created_at)
+      `INSERT INTO trading_hours_restrictions (user_id, account_id, time_windows, expires_at, enabled_at, created_at)
        VALUES ($1, $2, $3, $4, NOW(), NOW())
        RETURNING id, account_id, time_windows, enabled_at, expires_at, created_at`,
       [req.user.id, accountId, JSON.stringify(timeWindows), expiresAt]
     );
     
-    const lockout = result.rows[0];
+    const restriction = result.rows[0];
     
     res.json({
       success: true,
-      lockout,
-      message: 'Session lockout enabled successfully'
+      restriction,
+      message: 'Trading hours restriction enabled successfully'
     });
   } catch (err) {
-    console.error('[SessionLockouts] Error creating lockout:', err);
-    res.status(500).json({ success: false, error: 'Failed to create session lockout' });
+    console.error('[TradingHoursRestrictions] Error creating restriction:', err);
+    res.status(500).json({ success: false, error: 'Failed to create trading hours restriction' });
   }
 });
 
 /**
- * DELETE /session_lockouts/:id
- * Delete a session lockout (only allowed if expired)
+ * DELETE /trading_hours_restrictions/:id
+ * Delete a trading hours restriction (only allowed if expired)
  */
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get the lockout
+    // Get the restriction
     const result = await pool.query(
-      `SELECT id, expires_at FROM session_lockouts
+      `SELECT id, expires_at FROM trading_hours_restrictions
        WHERE id = $1 AND user_id = $2`,
       [id, req.user.id]
     );
     
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Session lockout not found' });
+      return res.status(404).json({ success: false, error: 'Trading hours restriction not found' });
     }
     
-    const lockout = result.rows[0];
+    const restriction = result.rows[0];
     
-    // Check if lockout has expired
-    if (new Date(lockout.expires_at) > new Date()) {
+    // Check if restriction has expired
+    if (new Date(restriction.expires_at) > new Date()) {
       return res.status(403).json({
         success: false,
-        error: 'Cannot delete an active session lockout until it expires',
-        expiresAt: lockout.expires_at
+        error: 'Cannot delete an active trading hours restriction until it expires',
+        expiresAt: restriction.expires_at
       });
     }
     
-    // Delete the lockout
+    // Delete the restriction
     await pool.query(
-      `DELETE FROM session_lockouts WHERE id = $1`,
+      `DELETE FROM trading_hours_restrictions WHERE id = $1`,
       [id]
     );
     
     res.status(204).send();
   } catch (err) {
-    console.error('[SessionLockouts] Error deleting lockout:', err);
-    res.status(500).json({ success: false, error: 'Failed to delete session lockout' });
+    console.error('[TradingHoursRestrictions] Error deleting restriction:', err);
+    res.status(500).json({ success: false, error: 'Failed to delete trading hours restriction' });
   }
 });
 
 /**
- * GET /session_lockouts/status
- * Check if trading is currently allowed based on session lockouts
- * Returns: { canTrade: boolean, lockout: {...} | null, reason: string | null }
+ * GET /trading_hours_restrictions/status
+ * Check if trading is currently allowed based on trading hours restrictions
+ * Returns: { canTrade: boolean, restriction: {...} | null, reason: string | null }
  */
 router.get('/status', authenticateToken, async (req, res) => {
   try {
@@ -207,10 +207,10 @@ router.get('/status', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'accountId is required' });
     }
     
-    // Get active lockout for this account
+    // Get active restriction for this account
     const result = await pool.query(
       `SELECT id, account_id, time_windows, enabled_at, expires_at
-       FROM session_lockouts
+       FROM trading_hours_restrictions
        WHERE user_id = $1 AND account_id = $2
        AND expires_at > NOW()
        LIMIT 1`,
@@ -218,36 +218,36 @@ router.get('/status', authenticateToken, async (req, res) => {
     );
     
     if (result.rows.length === 0) {
-      // No active lockout = can trade
+      // No active restriction = can trade
       return res.json({
         success: true,
         canTrade: true,
-        lockout: null,
+        restriction: null,
         reason: null
       });
     }
     
-    const lockout = result.rows[0];
+    const restriction = result.rows[0];
     // time_windows is JSONB, so it's already parsed by pg driver
-    const timeWindows = typeof lockout.time_windows === 'string' 
-      ? JSON.parse(lockout.time_windows) 
-      : lockout.time_windows;
+    const timeWindows = typeof restriction.time_windows === 'string' 
+      ? JSON.parse(restriction.time_windows) 
+      : restriction.time_windows;
     const withinWindow = isWithinTradingWindow(timeWindows);
     
     res.json({
       success: true,
       canTrade: withinWindow,
-      lockout: {
-        id: lockout.id,
-        accountId: lockout.account_id,
+      restriction: {
+        id: restriction.id,
+        accountId: restriction.account_id,
         timeWindows,
-        expiresAt: lockout.expires_at
+        expiresAt: restriction.expires_at
       },
       reason: withinWindow ? null : 'Outside of allowed trading hours'
     });
   } catch (err) {
-    console.error('[SessionLockouts] Error checking status:', err);
-    res.status(500).json({ success: false, error: 'Failed to check session lockout status' });
+    console.error('[TradingHoursRestrictions] Error checking status:', err);
+    res.status(500).json({ success: false, error: 'Failed to check trading hours restriction status' });
   }
 });
 
