@@ -17,7 +17,12 @@ router.post('/track', async (req, res) => {
     }
     
     // Extract user info from token if available
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    // Handle both header token (normal requests) and auth_token in payload (beacon requests)
+    let token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token && req.body.auth_token) {
+      token = req.body.auth_token; // Handle sendBeacon requests that can't send headers
+    }
+    
     let userId = null;
     
     if (token) {
@@ -40,7 +45,7 @@ router.post('/track', async (req, res) => {
     // });
 
     // Use user ID from token (most reliable), fallback to data payload
-    const finalUserId = userId || data?.parameters?.user_id || null;
+    const finalUserId = userId || data?.user_id || data?.parameters?.user_id || null;
 
     // Prepare analytics record
     // Pass data object directly - PostgreSQL JSONB will handle conversion automatically
@@ -64,27 +69,93 @@ router.post('/track', async (req, res) => {
     // });
 
     // Store in database
-    // Use NOW() for created_at to let PostgreSQL handle the timestamp correctly
-    // This ensures the timestamp is stored correctly regardless of server timezone
-    const query = `
-      INSERT INTO analytics_events 
-      (event_type, user_id, session_id, event_data, user_agent, referrer, screen_resolution, viewport_size, ip_address, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-    `;
-    
-    const values = [
-      analyticsRecord.event_type,
-      analyticsRecord.user_id,
-      analyticsRecord.session_id,
-      analyticsRecord.event_data,
-      analyticsRecord.user_agent,
-      analyticsRecord.referrer,
-      analyticsRecord.screen_resolution,
-      analyticsRecord.viewport_size,
-      analyticsRecord.ip_address
-    ];
+    // For page_visit events, use UPSERT to update existing records instead of creating duplicates
+    // This consolidates page visits into a single record that gets updated with time_spent and scroll_percent
+    if (event_type === 'page_visit') {
+      const pagePath = data?.page_path || data?.parameters?.page_path;
+      if (!pagePath) {
+        return res.status(400).json({ error: 'page_path is required for page_visit events' });
+      }
 
-    await db.query(query, values);
+      // Use UPSERT (ON CONFLICT) to update existing page_visit record or create new one
+      // Accumulate time_spent across multiple visits (SUM), keep max scroll_percent
+      // Logic: 
+      //   - time_spent = accumulated total across all visits
+      //   - current_visit_time = time for the current visit
+      //   - When time resets to 0, add current_visit_time to accumulated total
+      const upsertQuery = `
+        INSERT INTO analytics_events 
+        (event_type, user_id, session_id, event_data, user_agent, referrer, screen_resolution, viewport_size, ip_address, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        ON CONFLICT (session_id, (event_data->>'page_path')) 
+        WHERE event_type = 'page_visit'
+        DO UPDATE SET
+          event_data = (
+            analytics_events.event_data || $4::jsonb
+          ) || jsonb_build_object(
+            'scroll_percent', GREATEST(
+              COALESCE((analytics_events.event_data->>'scroll_percent')::int, 0),
+              COALESCE(($4::jsonb->>'scroll_percent')::int, 0)
+            ),
+            'time_spent',
+            CASE 
+              -- New visit detected: incoming time_spent (0) < current_visit_time (e.g., 30)
+              -- Add the previous visit's time to accumulated total, start new visit
+              WHEN COALESCE(($4::jsonb->>'time_spent')::int, 0) < COALESCE((analytics_events.event_data->>'current_visit_time')::int, 0)
+              THEN to_jsonb(
+                COALESCE((analytics_events.event_data->>'time_spent')::int, 0) + 
+                COALESCE((analytics_events.event_data->>'current_visit_time')::int, 0)
+              )
+              -- Same visit: time_spent is increasing (0→5→10→15)
+              -- Update accumulated total with new current visit time
+              ELSE to_jsonb(
+                COALESCE((analytics_events.event_data->>'time_spent')::int, 0) - 
+                COALESCE((analytics_events.event_data->>'current_visit_time')::int, 0) + 
+                COALESCE(($4::jsonb->>'time_spent')::int, 0)
+              )
+            END,
+            'current_visit_time', COALESCE(($4::jsonb->>'time_spent')::int, 0)
+          ),
+          user_id = COALESCE(EXCLUDED.user_id, analytics_events.user_id),
+          updated_at = COALESCE(analytics_events.updated_at, NOW(), NOW())
+        RETURNING id;
+      `;
+      
+      const values = [
+        analyticsRecord.event_type,
+        analyticsRecord.user_id,
+        analyticsRecord.session_id,
+        analyticsRecord.event_data,
+        analyticsRecord.user_agent,
+        analyticsRecord.referrer,
+        analyticsRecord.screen_resolution,
+        analyticsRecord.viewport_size,
+        analyticsRecord.ip_address
+      ];
+
+      await db.query(upsertQuery, values);
+    } else {
+      // For other event types, use regular INSERT
+      const query = `
+        INSERT INTO analytics_events 
+        (event_type, user_id, session_id, event_data, user_agent, referrer, screen_resolution, viewport_size, ip_address, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      `;
+      
+      const values = [
+        analyticsRecord.event_type,
+        analyticsRecord.user_id,
+        analyticsRecord.session_id,
+        analyticsRecord.event_data,
+        analyticsRecord.user_agent,
+        analyticsRecord.referrer,
+        analyticsRecord.screen_resolution,
+        analyticsRecord.viewport_size,
+        analyticsRecord.ip_address
+      ];
+
+      await db.query(query, values);
+    }
 
     res.json({ success: true });
   } catch (error) {
@@ -406,16 +477,52 @@ router.get('/session-activities', async (req, res) => {
     // Get session activities with user info and UTM source
     // Check registration_source and source fields in both top-level and parameters nested structure
     // Priority: parameters.registration_source > parameters.source > top-level registration_source > top-level source > utm_params
+    // Consolidate page_view and page_time into a single display format
     const activitiesQuery = `
       SELECT 
         ae.id,
         ae.event_type,
+        CASE 
+          WHEN ae.event_type = 'page_visit' THEN 
+            'Page: ' || COALESCE(
+              ae.event_data->>'page_name',
+              ae.event_data->'parameters'->>'page_name',
+              COALESCE(
+                ae.event_data->>'page_path',
+                ae.event_data->'parameters'->>'page_path',
+                'Unknown'
+              )
+            ) || 
+            CASE 
+              WHEN (COALESCE(ae.event_data->>'time_spent', ae.event_data->'parameters'->>'time_spent', '0'))::int > 0 
+              THEN ' Duration: ' || COALESCE(
+                ae.event_data->>'time_spent',
+                ae.event_data->'parameters'->>'time_spent',
+                '0'
+              ) || 's'
+              ELSE ''
+            END ||
+            CASE 
+              WHEN (COALESCE(ae.event_data->>'scroll_percent', ae.event_data->'parameters'->>'scroll_percent', '0'))::int > 0 
+              THEN ' Scroll: ' || COALESCE(
+                ae.event_data->>'scroll_percent',
+                ae.event_data->'parameters'->>'scroll_percent',
+                '0'
+              ) || '%'
+              ELSE ''
+            END
+          WHEN ae.event_type = 'page_view' THEN 
+            'Page: ' || COALESCE(
+              ae.event_data->>'page_name',
+              ae.event_data->'parameters'->>'page_name',
+              'Unknown'
+            )
+          ELSE ae.event_type
+        END as display_name,
         ae.user_id,
-        ae.session_id,
-        ae.event_data,
         ae.user_agent,
         ae.ip_address,
-        ae.created_at,
+        to_char(ae.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
         u.email,
         COALESCE(
           ae.event_data->'parameters'->'registration_source'->>'utm_source',
@@ -447,6 +554,14 @@ router.get('/session-activities', async (req, res) => {
       FROM analytics_events ae
       LEFT JOIN users u ON ae.user_id = u.id
       ${whereClause}
+      -- Filter out old event types that are now consolidated into page_visit
+      AND ae.event_type NOT IN ('page_time', 'session_duration', 'scroll_depth')
+      -- Only show page_visit events that have been updated (have time_spent > 0)
+      -- This filters out initial page loads that haven't been updated yet
+      AND (
+        ae.event_type != 'page_visit' 
+        OR COALESCE(ae.event_data->>'time_spent', ae.event_data->'parameters'->>'time_spent', '0')::int > 0
+      )
       ORDER BY ae.created_at DESC
       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
     `;
