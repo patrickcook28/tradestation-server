@@ -3,7 +3,7 @@ const tradeStationRoutes = require('./tradestation');
 const tradeAlertsRoutes = require('./tradeAlerts');
 const technicalIndicatorsRoutes = require('./technicalIndicators');
 const referralRoutes = require('./referral');
-const betaRoutes = require('./beta');
+const adminRoutes = require('./admin');
 const clientConfigRoutes = require('./clientConfig');
 const watchlistsRouter = require('./watchlists');
 const tradeJournalsRouter = require('./tradeJournals');
@@ -20,7 +20,7 @@ module.exports = {
     tradeAlertsRoutes,
     technicalIndicatorsRoutes,
     referralRoutes,
-    betaRoutes,
+    adminRoutes,
     clientConfigRoutes,
     watchlistsRouter,
     tradeJournalsRouter,

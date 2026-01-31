@@ -244,9 +244,6 @@ app.get('/tradestation/marketdata/stream/marketdepth/aggregates/:ticker', authen
 // Add referral routes
 app.use('/referral', routes.referralRoutes);
 
-// Beta tracking routes
-app.use('/beta', routes.betaRoutes);
-
 // Contact routes - POST is public but extracts user ID if token present, GET/PUT require auth
 app.post('/contact', optionalAuthenticateToken, asyncHandler(routes.contactRoutes.postContact));
 app.use('/contact', authenticateToken, routes.contactRoutes);
@@ -287,6 +284,9 @@ app.get('/admin/account_snapshots/overview', authenticateToken, requireSuperuser
 // Indicators proxy route (pass-through Alpha Vantage) and admin cache info
 app.get('/api/indicators', authenticateToken, asyncHandler(routes.indicatorsRoutes.getIndicator));
 app.get('/admin/cache', authenticateToken, asyncHandler(routes.indicatorsRoutes.getCacheInfo));
+
+// Admin area routes (e.g. GET /admin/users)
+app.use('/admin', routes.adminRoutes);
 
 // Billing routes (Stripe integration)
 const billingRoutes = require('./routes/billing');

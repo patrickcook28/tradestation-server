@@ -68,9 +68,9 @@ const register = async (req, res) => {
 
         let hashedPassword = await bcrypt.hash(password, 8)
         let beta_user = false
-        let early_access = true  // All new users get early access
+        let early_access = false  // Early access is over; subscription (or referral) required for access
         let final_referral_code = null
-        const earlyAccessStartTime = new Date();
+        const earlyAccessStartTime = early_access ? new Date() : null;
 
         // If referral code is provided, validate it and set beta_user to true for backward compatibility
         if (referral_code) {

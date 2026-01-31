@@ -156,22 +156,62 @@ async function getSubscriptionStatus(userId) {
     // Check if user has used trial before
     const hasUsedTrialBefore = await hasUsedTrial(userId);
 
-    // Superuser
+    // Fetch subscription so we can include it when user has access via superuser/early_access (for UI "Manage Subscription")
+    const subscription = await getActiveSubscription(userId);
+
+    // Build subscription payload for response (shared by early-access and subscription paths)
+    const buildSubscriptionPayload = async (sub) => {
+      if (!sub) return null;
+      let cancelAtPeriodEnd = sub.cancel_at_period_end;
+      let canceledAt = sub.canceled_at;
+      let cancelAt = null;
+      if (sub.status === 'trialing' && sub.stripe_subscription_id) {
+        try {
+          const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+          const stripeSubscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+          cancelAtPeriodEnd = stripeSubscription.cancel_at_period_end || false;
+          canceledAt = stripeSubscription.canceled_at ? new Date(stripeSubscription.canceled_at * 1000) : null;
+          cancelAt = stripeSubscription.cancel_at ? new Date(stripeSubscription.cancel_at * 1000) : null;
+          if (canceledAt && !sub.canceled_at) {
+            await pool.query('UPDATE subscriptions SET canceled_at = $1 WHERE id = $2', [canceledAt, sub.id]);
+          }
+          if (cancelAtPeriodEnd !== sub.cancel_at_period_end) {
+            await pool.query('UPDATE subscriptions SET cancel_at_period_end = $1 WHERE id = $2', [cancelAtPeriodEnd, sub.id]);
+          }
+        } catch (error) {
+          logger.error('Error fetching subscription from Stripe:', error);
+        }
+      }
+      const isCanceled = cancelAt !== null || cancelAtPeriodEnd === true || canceledAt !== null;
+      return {
+        id: sub.id,
+        status: sub.status,
+        plan: sub.plan,
+        currentPeriodEnd: sub.current_period_end,
+        cancelAtPeriodEnd,
+        canceledAt,
+        cancelAt,
+        trialEnd: sub.trial_end,
+        isCanceled
+      };
+    };
+
+    // Superuser – include subscription if present so UI can show "Manage Subscription"
     if (user.superuser) {
       return {
         hasAccess: true,
         reason: 'superuser',
-        subscription: null,
+        subscription: await buildSubscriptionPayload(subscription),
         hasUsedTrial: hasUsedTrialBefore
       };
     }
 
-    // Early access user (new system)
+    // Early access user (new system) – include subscription if present so UI can show "Manage Subscription"
     if (user.early_access) {
       return {
         hasAccess: true,
         reason: 'early_access',
-        subscription: null,
+        subscription: await buildSubscriptionPayload(subscription),
         hasUsedTrial: hasUsedTrialBefore
       };
     }
@@ -188,7 +228,7 @@ async function getSubscriptionStatus(userId) {
           hasAccess: true,
           reason: 'beta_access',
           referralCode: user.referral_code,
-          subscription: null,
+          subscription: await buildSubscriptionPayload(subscription),
           hasUsedTrial: hasUsedTrialBefore
         };
       } else {
@@ -200,8 +240,7 @@ async function getSubscriptionStatus(userId) {
       }
     }
 
-    // Check subscription
-    const subscription = await getActiveSubscription(userId);
+    // No bypass – check subscription for access
     
     if (!subscription) {
       return {
@@ -212,64 +251,13 @@ async function getSubscriptionStatus(userId) {
       };
     }
 
-    // For trialing subscriptions, check Stripe directly to get real-time cancellation status
-    // Stripe sets cancel_at (future timestamp) when a trial is canceled, not cancel_at_period_end
-    let cancelAtPeriodEnd = subscription.cancel_at_period_end;
-    let canceledAt = subscription.canceled_at;
-    let cancelAt = null;
-    
-    if (subscription.status === 'trialing' && subscription.stripe_subscription_id) {
-      try {
-        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-        const stripeSubscription = await stripe.subscriptions.retrieve(subscription.stripe_subscription_id);
-        
-        // Update cancellation fields from Stripe
-        cancelAtPeriodEnd = stripeSubscription.cancel_at_period_end || false;
-        canceledAt = stripeSubscription.canceled_at ? new Date(stripeSubscription.canceled_at * 1000) : null;
-        cancelAt = stripeSubscription.cancel_at ? new Date(stripeSubscription.cancel_at * 1000) : null;
-        
-        // Sync cancellation status back to database
-        if (canceledAt && !subscription.canceled_at) {
-          await pool.query(
-            'UPDATE subscriptions SET canceled_at = $1 WHERE id = $2',
-            [canceledAt, subscription.id]
-          );
-        }
-        
-        if (cancelAtPeriodEnd !== subscription.cancel_at_period_end) {
-          await pool.query(
-            'UPDATE subscriptions SET cancel_at_period_end = $1 WHERE id = $2',
-            [cancelAtPeriodEnd, subscription.id]
-          );
-        }
-      } catch (error) {
-        logger.error('Error fetching subscription from Stripe:', error);
-        // Fall back to database values if Stripe fetch fails
-      }
-    }
-
     const hasAccess = ['active', 'trialing'].includes(subscription.status);
-    
-    // Determine if subscription/trial is canceled
-    // For trials, Stripe sets cancel_at (future timestamp) when canceled
-    // For active subscriptions, cancel_at_period_end is set to true
-    // canceled_at is set when subscription is already canceled
-    const isCanceled = cancelAt !== null || cancelAtPeriodEnd === true || canceledAt !== null;
+    const subscriptionPayload = await buildSubscriptionPayload(subscription);
 
     return {
       hasAccess,
       reason: hasAccess ? 'subscription' : 'subscription_inactive',
-      subscription: {
-        id: subscription.id,
-        status: subscription.status,
-        plan: subscription.plan,
-        currentPeriodEnd: subscription.current_period_end,
-        cancelAtPeriodEnd: cancelAtPeriodEnd,
-        canceledAt: canceledAt,
-        cancelAt: cancelAt,
-        trialEnd: subscription.trial_end,
-        isCanceled: isCanceled
-      },
+      subscription: subscriptionPayload,
       hasUsedTrial: hasUsedTrialBefore
     };
   } catch (error) {

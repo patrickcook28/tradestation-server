@@ -93,6 +93,8 @@ router.post('/track', async (req, res) => {
           event_data = (
             analytics_events.event_data || $4::jsonb
           ) || jsonb_build_object(
+            'page_name', COALESCE($4::jsonb->>'page_name', analytics_events.event_data->>'page_name'),
+            'page_path', COALESCE($4::jsonb->>'page_path', analytics_events.event_data->>'page_path'),
             'scroll_percent', GREATEST(
               COALESCE((analytics_events.event_data->>'scroll_percent')::int, 0),
               COALESCE(($4::jsonb->>'scroll_percent')::int, 0)
@@ -515,7 +517,21 @@ router.get('/session-activities', async (req, res) => {
             'Page: ' || COALESCE(
               ae.event_data->>'page_name',
               ae.event_data->'parameters'->>'page_name',
-              'Unknown'
+              -- Try to derive page name from page_path if page_name is missing
+              CASE 
+                WHEN COALESCE(ae.event_data->>'page_path', ae.event_data->'parameters'->>'page_path', '') != '' THEN
+                  -- Extract readable name from path
+                  -- Handle common paths: '/admin/section' -> 'Admin Section', '/some-page' -> 'Some Page'
+                  CASE 
+                    WHEN COALESCE(ae.event_data->>'page_path', ae.event_data->'parameters'->>'page_path', '') LIKE '/admin/%' THEN
+                      'Admin - ' || INITCAP(REPLACE(REPLACE(SPLIT_PART(COALESCE(ae.event_data->>'page_path', ae.event_data->'parameters'->>'page_path'), '/', 3), '-', ' '), '_', ' '))
+                    WHEN COALESCE(ae.event_data->>'page_path', ae.event_data->'parameters'->>'page_path', '') = '/' THEN
+                      'Home'
+                    ELSE
+                      INITCAP(REPLACE(REPLACE(REPLACE(COALESCE(ae.event_data->>'page_path', ae.event_data->'parameters'->>'page_path'), '/', ''), '-', ' '), '_', ' '))
+                  END
+                ELSE 'Unknown'
+              END
             )
           ELSE ae.event_type
         END as display_name,
